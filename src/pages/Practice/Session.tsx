@@ -52,6 +52,7 @@ export const PracticeSession = () => {
 
   const questionIds = searchParams.get('ids')?.split(',') || [];
   const savedAnswers = searchParams.get('savedAnswers');
+  const goToIndex = searchParams.get('goToIndex');
 
   useEffect(() => {
     const selectedQuestions = questionIds
@@ -75,6 +76,15 @@ export const PracticeSession = () => {
       navigate('/practice/session?' + params.toString(), { replace: true });
     }
   }, [savedAnswers, questions.length]);
+
+  useEffect(() => {
+    if (goToIndex && questions.length > 0) {
+      const idx = parseInt(goToIndex, 10);
+      if (!isNaN(idx) && idx >= 0 && idx < questions.length) {
+        goToQuestion(idx);
+      }
+    }
+  }, [goToIndex, questions.length]);
 
   const currentQuestion = questions[currentQuestionIndex];
   const answeredCount = Object.keys(userAnswers).length;

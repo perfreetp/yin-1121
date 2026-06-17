@@ -188,6 +188,23 @@ ${questionResults.map(r => {
   return line;
 }).join('\n')}
 
+-------- 薄弱大类汇总 --------
+${categoryGroups
+  .filter(g => {
+    const acc = g.totalCount > 0 ? Math.round((g.correctCount / g.totalCount) * 100) : 0;
+    return acc < 80;
+  })
+  .map(g => {
+    const acc = g.totalCount > 0 ? Math.round((g.correctCount / g.totalCount) * 100) : 0;
+    const tag = acc < 60 ? '需重点复习' : acc < 80 ? '建议加强' : '';
+    return `${g.categoryName.padEnd(8)}: 正确率 ${acc}% ⚠️${tag}（答对${g.correctCount}/${g.totalCount}题）`;
+  }).join('\n') || '无薄弱类别'}
+-------- 讲师点评摘要 --------
+📌 总体评价：本次考核${isPassed ? '达到通过标准' : '未达通过标准'}，${accuracy >= 80 ? '整体掌握扎实' : accuracy >= 60 ? '基础掌握尚可，部分领域需加强' : '基础薄弱，建议系统复习'}。
+📌 薄弱提醒：${suggestions[0] || '无'}
+📌 复习建议：建议按照「${categoryGroups[0]?.categoryName || '基础知识'}」→「${categoryGroups[1]?.categoryName || '专项训练'}」的路线重点复习，每天安排1-2个知识点的错题重练，${wrongCount > 3 ? '争取一周内补齐短板' : '巩固即可'}。
+📌 下次目标：${isPassed ? `挑战${level.passScore + 10}分以上，争取优秀` : `重点突破${categoryGroups[0]?.categoryName || '薄弱类别'}，达到${level.passScore}分及格线`}。
+
 ------------ 学习建议 ------------
 ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 

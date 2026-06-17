@@ -675,56 +675,116 @@ const ClassroomView = ({ currentUser, currentStats, currentLevelProgress }: Clas
     return ranges;
   }, [allStudents]);
 
+  const [projectionMode, setProjectionMode] = useState(false);
+
+  const typicalErrors = useMemo(() => {
+    const categoryAccMap = new Map<string, number[]>();
+    allStudents.forEach(s => {
+      s.weakCategories.forEach(wc => {
+        if (!categoryAccMap.has(wc.categoryName)) categoryAccMap.set(wc.categoryName, []);
+        categoryAccMap.get(wc.categoryName)!.push(wc.accuracy);
+      });
+    });
+    const avgMap = new Map<string, number>();
+    categoryAccMap.forEach((accs, name) => {
+      avgMap.set(name, accs.reduce((a, b) => a + b, 0) / accs.length);
+    });
+    const typicalErrorMap: Record<string, string> = {
+      '法定依据': '受理条件混淆容缺受理和一般受理情形',
+      '承诺时限': '法定时限与承诺时限混淆，超期办结预警识别不清',
+      '申请材料': '申请材料中身份证复印件与共享核验替代关系不清晰',
+      '材料减免': '材料减免条件判断不准，容缺材料与减免材料区分不清',
+      '办理流程': '受理→审查→决定环节的权限划分不明确',
+      '审查标准': '形式审查与实质审查的标准混淆',
+      '收费依据': '收费项目与减免条件记忆模糊',
+    };
+    return Array.from(avgMap.entries())
+      .sort((a, b) => a[1] - b[1])
+      .slice(0, 3)
+      .map(([name, avg]) => ({
+        categoryName: name,
+        avgAccuracy: Math.round(avg * 10) / 10,
+        description: typicalErrorMap[name] || '常见概念混淆与条件判断错误',
+      }));
+  }, [allStudents]);
+
+  const reviewRoute = useMemo(() => {
+    return weakCategoryRanking.slice(0, 3).map((wc, i) => ({
+      day: i + 1,
+      categoryName: wc.categoryName,
+      weakCount: wc.weakStudents,
+    }));
+  }, [weakCategoryRanking]);
+
   return (
-    <div>
-      {/* Class Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="card p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Users className="w-5 h-5 text-primary-500" />
-            <span className="text-sm text-slate-500">班级人数</span>
-          </div>
-          <p className="text-2xl font-bold text-slate-900">{classStats.total}</p>
-          <p className="text-xs text-slate-500">已通过 {classStats.passedCount} 人</p>
+    <div className={projectionMode ? 'bg-slate-900 text-white min-h-screen -m-6 lg:-m-8 p-8 lg:p-12' : ''}>
+      {projectionMode && (
+        <div className="flex justify-end mb-6">
+          <button
+            onClick={() => setProjectionMode(false)}
+            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            退出投屏
+          </button>
         </div>
-        <div className="card p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Target className="w-5 h-5 text-success-500" />
-            <span className="text-sm text-slate-500">平均正确率</span>
-          </div>
-          <p className="text-2xl font-bold text-slate-900">{classStats.avgAccuracy}%</p>
-          <p className="text-xs text-slate-500">人均答题 {classStats.avgQuestions} 题</p>
+      )}
+      {!projectionMode && (
+        <div className="flex justify-end mb-4">
+          <button
+            onClick={() => setProjectionMode(true)}
+            className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white rounded-lg text-sm font-medium transition-colors"
+          >
+            🖥 投屏模式
+          </button>
         </div>
-        <div className="card p-4">
+      )}
+
+      <div className={projectionMode ? 'grid grid-cols-2 md:grid-cols-4 gap-6 mb-8' : 'grid grid-cols-2 md:grid-cols-4 gap-4 mb-6'}>
+        <div className={projectionMode ? 'bg-slate-800 border border-slate-700 rounded-xl p-6' : 'card p-4'}>
           <div className="flex items-center gap-2 mb-2">
-            <Trophy className="w-5 h-5 text-accent-500" />
-            <span className="text-sm text-slate-500">通过率</span>
+            <Users className={projectionMode ? 'w-6 h-6 text-blue-400' : 'w-5 h-5 text-primary-500'} />
+            <span className={projectionMode ? 'text-lg text-slate-400' : 'text-sm text-slate-500'}>班级人数</span>
           </div>
-          <p className="text-2xl font-bold text-slate-900">
+          <p className={projectionMode ? 'text-5xl font-bold text-white' : 'text-2xl font-bold text-slate-900'}>{classStats.total}</p>
+          <p className={projectionMode ? 'text-base text-slate-400' : 'text-xs text-slate-500'}>已通过 {classStats.passedCount} 人</p>
+        </div>
+        <div className={projectionMode ? 'bg-slate-800 border border-slate-700 rounded-xl p-6' : 'card p-4'}>
+          <div className="flex items-center gap-2 mb-2">
+            <Target className={projectionMode ? 'w-6 h-6 text-green-400' : 'w-5 h-5 text-success-500'} />
+            <span className={projectionMode ? 'text-lg text-slate-400' : 'text-sm text-slate-500'}>平均正确率</span>
+          </div>
+          <p className={projectionMode ? 'text-5xl font-bold text-white' : 'text-2xl font-bold text-slate-900'}>{classStats.avgAccuracy}%</p>
+          <p className={projectionMode ? 'text-base text-slate-400' : 'text-xs text-slate-500'}>人均答题 {classStats.avgQuestions} 题</p>
+        </div>
+        <div className={projectionMode ? 'bg-slate-800 border border-slate-700 rounded-xl p-6' : 'card p-4'}>
+          <div className="flex items-center gap-2 mb-2">
+            <Trophy className={projectionMode ? 'w-6 h-6 text-amber-400' : 'w-5 h-5 text-accent-500'} />
+            <span className={projectionMode ? 'text-lg text-slate-400' : 'text-sm text-slate-500'}>通过率</span>
+          </div>
+          <p className={projectionMode ? 'text-5xl font-bold text-white' : 'text-2xl font-bold text-slate-900'}>
             {classStats.total > 0 ? Math.round((classStats.passedCount / classStats.total) * 100) : 0}%
           </p>
-          <p className="text-xs text-slate-500">{classStats.passedCount}/{classStats.total} 人</p>
+          <p className={projectionMode ? 'text-base text-slate-400' : 'text-xs text-slate-500'}>{classStats.passedCount}/{classStats.total} 人</p>
         </div>
-        <div className="card p-4">
+        <div className={projectionMode ? 'bg-slate-800 border border-slate-700 rounded-xl p-6' : 'card p-4'}>
           <div className="flex items-center gap-2 mb-2">
-            <BarChart3 className="w-5 h-5 text-danger-500" />
-            <span className="text-sm text-slate-500">成绩分布</span>
+            <BarChart3 className={projectionMode ? 'w-6 h-6 text-red-400' : 'w-5 h-5 text-danger-500'} />
+            <span className={projectionMode ? 'text-lg text-slate-400' : 'text-sm text-slate-500'}>成绩分布</span>
           </div>
           <div className="space-y-1">
             {accuracyRanges.map(r => (
               <div key={r.label} className="flex items-center gap-2">
                 <div className={cn('w-2 h-2 rounded-full', r.color)} />
-                <span className="text-xs text-slate-600">{r.count}人 {r.label}</span>
+                <span className={projectionMode ? 'text-base text-slate-300' : 'text-xs text-slate-600'}>{r.count}人 {r.label}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
 
-      {/* Weak Category Ranking */}
-      <div className="card p-6 mb-6">
-        <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <AlertTriangle className="w-5 h-5 text-danger-500" />
+      <div className={projectionMode ? 'bg-slate-800 border border-slate-700 rounded-xl p-6 mb-8' : 'card p-6 mb-6'}>
+        <h2 className={projectionMode ? 'font-semibold text-white mb-5 flex items-center gap-2 text-xl' : 'font-semibold text-slate-900 mb-4 flex items-center gap-2'}>
+          <AlertTriangle className={projectionMode ? 'w-6 h-6 text-red-400' : 'w-5 h-5 text-danger-500'} />
           薄弱类别排行
         </h2>
         {weakCategoryRanking.length > 0 ? (
@@ -733,22 +793,25 @@ const ClassroomView = ({ currentUser, currentStats, currentLevelProgress }: Clas
               <div key={wc.categoryName} className="flex items-center gap-3">
                 <span className={cn(
                   'w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold shrink-0',
-                  i === 0 && 'bg-danger-500 text-white',
-                  i === 1 && 'bg-accent-500 text-white',
-                  i >= 2 && 'bg-slate-200 text-slate-600'
+                  projectionMode && i === 0 && 'bg-red-500 text-white',
+                  projectionMode && i === 1 && 'bg-amber-500 text-white',
+                  projectionMode && i >= 2 && 'bg-slate-600 text-slate-300',
+                  !projectionMode && i === 0 && 'bg-danger-500 text-white',
+                  !projectionMode && i === 1 && 'bg-accent-500 text-white',
+                  !projectionMode && i >= 2 && 'bg-slate-200 text-slate-600'
                 )}>
                   {i + 1}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-sm font-medium text-slate-800">{wc.categoryName}</span>
-                    <span className="text-xs text-danger-600 font-medium">
+                    <span className={projectionMode ? 'text-lg font-medium text-white' : 'text-sm font-medium text-slate-800'}>{wc.categoryName}</span>
+                    <span className={projectionMode ? 'text-sm text-red-400 font-medium' : 'text-xs text-danger-600 font-medium'}>
                       {wc.weakStudents}/{wc.totalStudents} 人薄弱
                     </span>
                   </div>
-                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                    <div 
-                      className="h-full bg-danger-400 rounded-full"
+                  <div className={projectionMode ? 'h-3 bg-slate-700 rounded-full overflow-hidden' : 'h-2 bg-slate-200 rounded-full overflow-hidden'}>
+                    <div
+                      className={projectionMode ? 'h-full bg-red-500 rounded-full' : 'h-full bg-danger-400 rounded-full'}
                       style={{ width: `${wc.totalStudents > 0 ? (wc.weakStudents / wc.totalStudents) * 100 : 0}%` }}
                     />
                   </div>
@@ -757,88 +820,142 @@ const ClassroomView = ({ currentUser, currentStats, currentLevelProgress }: Clas
             ))}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">暂无薄弱类别数据</p>
+          <p className={projectionMode ? 'text-base text-slate-400' : 'text-sm text-slate-500'}>暂无薄弱类别数据</p>
         )}
       </div>
 
-      {/* Student Rankings Table */}
-      <div className="card p-6">
-        <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
-          <Award className="w-5 h-5 text-accent-500" />
-          学员成绩一览
-        </h2>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-slate-200">
-                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">排名</th>
-                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">学员</th>
-                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">答题数</th>
-                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">正确率</th>
-                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">通过关卡</th>
-                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">薄弱类别</th>
-              </tr>
-            </thead>
-            <tbody>
-              {allStudents.map((student, idx) => (
-                <tr key={student.id} className={cn(
-                  'border-b border-slate-100',
-                  student.id === 'me' && 'bg-primary-50/50'
-                )}>
-                  <td className="py-3 px-3">
-                    <span className={cn(
-                      'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold',
-                      idx === 0 && 'bg-amber-100 text-amber-700',
-                      idx === 1 && 'bg-slate-200 text-slate-600',
-                      idx === 2 && 'bg-amber-50 text-amber-600',
-                      idx > 2 && 'text-slate-400'
-                    )}>
-                      {idx + 1}
-                    </span>
-                  </td>
-                  <td className="py-3 px-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">{student.avatar}</span>
-                      <span className="text-sm font-medium text-slate-800">{student.name}</span>
-                      {student.id === 'me' && (
-                        <span className="tag-primary text-xs">我</span>
-                      )}
+      {projectionMode && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
+            <h2 className="font-semibold text-white mb-4 flex items-center gap-2 text-xl">
+              <XCircle className="w-6 h-6 text-red-400" />
+              典型错题
+            </h2>
+            {typicalErrors.length > 0 ? (
+              <div className="space-y-4">
+                {typicalErrors.map(err => (
+                  <div key={err.categoryName} className="bg-slate-700/50 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-base font-medium text-white">{err.categoryName}</span>
+                      <span className="text-sm text-red-400">均正确率 {err.avgAccuracy}%</span>
                     </div>
-                  </td>
-                  <td className="py-3 px-3 text-sm text-slate-700">{student.totalQuestions}</td>
-                  <td className="py-3 px-3">
-                    <span className={cn(
-                      'text-sm font-bold',
-                      student.accuracy >= 80 ? 'text-success-600' :
-                      student.accuracy >= 60 ? 'text-accent-600' : 'text-danger-600'
-                    )}>
-                      {student.accuracy}%
-                    </span>
-                  </td>
-                  <td className="py-3 px-3">
-                    <span className="text-sm text-slate-700">
-                      {student.levelsPassed}/{student.totalLevels}
-                    </span>
-                  </td>
-                  <td className="py-3 px-3">
-                    <div className="flex flex-wrap gap-1">
-                      {student.weakCategories.length > 0 ? (
-                        student.weakCategories.slice(0, 2).map(wc => (
-                          <span key={wc.categoryName} className="tag-danger text-xs">
-                            {wc.categoryName} {wc.accuracy}%
-                          </span>
-                        ))
-                      ) : (
-                        <span className="tag-success text-xs">均衡</span>
-                      )}
+                    <p className="text-slate-400 text-sm">{err.description}</p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-slate-400 text-base">暂无典型错题数据</p>
+            )}
+          </div>
+
+          <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
+            <h2 className="font-semibold text-white mb-4 flex items-center gap-2 text-xl">
+              <Calendar className="w-6 h-6 text-blue-400" />
+              建议复习路线
+            </h2>
+            {reviewRoute.length > 0 ? (
+              <div className="relative pl-8">
+                <div className="absolute left-3 top-2 bottom-2 w-0.5 bg-slate-600" />
+                {reviewRoute.map(item => (
+                  <div key={item.day} className="relative mb-6 last:mb-0">
+                    <div className="absolute -left-5 top-1 w-4 h-4 rounded-full bg-blue-500 border-2 border-slate-800" />
+                    <div>
+                      <p className="text-sm text-slate-400 mb-1">第{item.day}天</p>
+                      <p className="text-lg font-medium text-white">{item.categoryName}</p>
+                      <p className="text-sm text-red-400">{item.weakCount} 人薄弱</p>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    {item.day < reviewRoute.length && (
+                      <div className="absolute -left-4 top-6 text-slate-600 text-lg">↓</div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-slate-400 text-base">暂无复习路线数据</p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
+
+      {!projectionMode && (
+        <div className="card p-6">
+          <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+            <Award className="w-5 h-5 text-accent-500" />
+            学员成绩一览
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-slate-200">
+                  <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">排名</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">学员</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">答题数</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">正确率</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">通过关卡</th>
+                  <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">薄弱类别</th>
+                </tr>
+              </thead>
+              <tbody>
+                {allStudents.map((student, idx) => (
+                  <tr key={student.id} className={cn(
+                    'border-b border-slate-100',
+                    student.id === 'me' && 'bg-primary-50/50'
+                  )}>
+                    <td className="py-3 px-3">
+                      <span className={cn(
+                        'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold',
+                        idx === 0 && 'bg-amber-100 text-amber-700',
+                        idx === 1 && 'bg-slate-200 text-slate-600',
+                        idx === 2 && 'bg-amber-50 text-amber-600',
+                        idx > 2 && 'text-slate-400'
+                      )}>
+                        {idx + 1}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">{student.avatar}</span>
+                        <span className="text-sm font-medium text-slate-800">{student.name}</span>
+                        {student.id === 'me' && (
+                          <span className="tag-primary text-xs">我</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-3 px-3 text-sm text-slate-700">{student.totalQuestions}</td>
+                    <td className="py-3 px-3">
+                      <span className={cn(
+                        'text-sm font-bold',
+                        student.accuracy >= 80 ? 'text-success-600' :
+                        student.accuracy >= 60 ? 'text-accent-600' : 'text-danger-600'
+                      )}>
+                        {student.accuracy}%
+                      </span>
+                    </td>
+                    <td className="py-3 px-3">
+                      <span className="text-sm text-slate-700">
+                        {student.levelsPassed}/{student.totalLevels}
+                      </span>
+                    </td>
+                    <td className="py-3 px-3">
+                      <div className="flex flex-wrap gap-1">
+                        {student.weakCategories.length > 0 ? (
+                          student.weakCategories.slice(0, 2).map(wc => (
+                            <span key={wc.categoryName} className="tag-danger text-xs">
+                              {wc.categoryName} {wc.accuracy}%
+                            </span>
+                          ))
+                        ) : (
+                          <span className="tag-success text-xs">均衡</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

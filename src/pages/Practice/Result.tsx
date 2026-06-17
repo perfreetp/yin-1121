@@ -38,7 +38,7 @@ export const PracticeResult = () => {
     goToQuestion,
     reset
   } = usePracticeStore();
-  const { getStats, createReviewPlan } = useLearningStore();
+  const { getStats, createReviewPlan, completeReviewTask, reviewPlans } = useLearningStore();
   
   const [selectedCategory, setSelectedCategory] = useState<string | null>(() => {
     try {
@@ -53,6 +53,13 @@ export const PracticeResult = () => {
   });
   const [showPlanModal, setShowPlanModal] = useState(false);
   const [generatedPlan, setGeneratedPlan] = useState<Omit<ReviewPlanTask, 'isCompleted'>[]>([]);
+  const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, boolean>>({});
+
+  const planProgress = useMemo(() => {
+    const totalDays = reviewPlans.reduce((s, p) => s + p.totalDays, 0);
+    const completedDays = reviewPlans.reduce((s, p) => s + p.completedDays, 0);
+    return { totalDays, completedDays, plans: reviewPlans };
+  }, [reviewPlans]);
 
   const categoryGroups = useMemo(() => {
     if (questions.length === 0) return [];
@@ -166,9 +173,8 @@ export const PracticeResult = () => {
   const handleSavePlan = () => {
     if (generatedPlan.length === 0) return;
     createReviewPlan(generatedPlan);
-    setShowPlanModal(false);
     setGeneratedPlan([]);
-    alert('复习计划已保存！可在学习中心查看。');
+    setShowPlanModal(false);
   };
 
   const goToKnowledge = (knowledgeId: string) => {
@@ -176,10 +182,7 @@ export const PracticeResult = () => {
   };
 
   const goBackToQuestion = (index: number) => {
-    navigate('/practice/session');
-    setTimeout(() => {
-      goToQuestion(index);
-    }, 50);
+    navigate(`/practice/session?goToIndex=${index}`);
   };
 
   const displayGroups = selectedCategory 
@@ -296,6 +299,134 @@ export const PracticeResult = () => {
           </div>
         )}
 
+        {planProgress.plans.length > 0 && (
+          <div className="card p-6 mb-6 animate-fade-in-up">
+            <h2 className="text-lg font-semibold text-slate-900 mb-4 flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-success-500" />
+              我的复习计划
+              <span className="text-sm font-normal text-slate-500">
+                {planProgress.completedDays}/{planProgress.totalDays} 天已完成
+              </span>
+            </h2>
+            <div className="space-y-3">
+              {planProgress.plans.map(plan => {
+                const days = [...new Set(plan.tasks.map(t => t.day))].sort((a, b) => a - b);
+                return (
+                  <div key={plan.id} className="space-y-3">
+                    {days.map(day => {
+                      const dayTasks = plan.tasks.filter(t => t.day === day);
+                      const allCompleted = dayTasks.every(t => t.isCompleted);
+                      const dayKey = `${plan.id}-${day}`;
+                      const isExpanded = expandedPlanDays[dayKey];
+                      const totalWrongQuestions = dayTasks.reduce((s, t) => s + t.wrongQuestionIds.length, 0);
+
+                      return (
+                        <div
+                          key={day}
+                          className={cn(
+                            "border rounded-xl overflow-hidden transition-colors",
+                            allCompleted ? "border-success-200 bg-success-50/30" : "border-slate-200"
+                          )}
+                        >
+                          <div
+                            className={cn(
+                              "px-4 py-3 flex items-center justify-between cursor-pointer",
+                              allCompleted
+                                ? "bg-gradient-to-r from-success-500 to-success-600 text-white"
+                                : "bg-gradient-to-r from-primary-500 to-primary-600 text-white"
+                            )}
+                            onClick={() => setExpandedPlanDays(prev => ({ ...prev, [dayKey]: !prev[dayKey] }))}
+                          >
+                            <div className="flex items-center gap-2">
+                              {allCompleted ? (
+                                <CheckCircle2 className="w-4 h-4" />
+                              ) : (
+                                <Calendar className="w-4 h-4" />
+                              )}
+                              <span className="font-semibold text-sm">第 {day} 天</span>
+                              {allCompleted && (
+                                <span className="text-xs opacity-80">已完成</span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs opacity-80">
+                                {dayTasks.map(t => t.categoryName).join('、')}
+                              </span>
+                              <span className="text-xs opacity-80">
+                                {totalWrongQuestions} 道错题
+                              </span>
+                              <ChevronRight
+                                className={cn(
+                                  "w-4 h-4 transition-transform",
+                                  isExpanded && "rotate-90"
+                                )}
+                              />
+                            </div>
+                          </div>
+                          {isExpanded && (
+                            <div className="divide-y divide-slate-100">
+                              {dayTasks.map((task, ti) => (
+                                <div
+                                  key={ti}
+                                  className={cn(
+                                    "p-3",
+                                    task.isCompleted && "bg-success-50/50"
+                                  )}
+                                >
+                                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                    <span className="text-xs font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
+                                      {task.categoryName}
+                                    </span>
+                                    <span className="text-sm font-medium text-slate-800">
+                                      {task.knowledgeTitle}
+                                    </span>
+                                    {task.isCompleted && (
+                                      <span className="text-xs text-success-600 font-medium flex items-center gap-0.5">
+                                        <CheckCircle2 className="w-3 h-3" /> 已完成
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-slate-500 mb-2">
+                                    需复习错题 {task.wrongQuestionIds.length} 道
+                                  </p>
+                                  <div className="flex gap-2 flex-wrap">
+                                    <button
+                                      onClick={() => navigate(`/rules/${task.knowledgeId}`)}
+                                      className="text-xs px-3 py-1.5 rounded-lg bg-primary-50 text-primary-700 hover:bg-primary-100 transition-colors flex items-center gap-1"
+                                    >
+                                      <BookOpen className="w-3 h-3" />
+                                      去规则课堂
+                                    </button>
+                                    <button
+                                      onClick={() => navigate(`/practice/session?ids=${task.wrongQuestionIds.join(',')}`)}
+                                      className="text-xs px-3 py-1.5 rounded-lg bg-danger-50 text-danger-700 hover:bg-danger-100 transition-colors flex items-center gap-1"
+                                    >
+                                      <RotateCcw className="w-3 h-3" />
+                                      错题再练
+                                    </button>
+                                    {!task.isCompleted && (
+                                      <button
+                                        onClick={() => completeReviewTask(plan.id, day, task.category)}
+                                        className="text-xs px-3 py-1.5 rounded-lg bg-success-50 text-success-700 hover:bg-success-100 transition-colors flex items-center gap-1"
+                                      >
+                                        ✅ 完成本天
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Review Plan Modal */}
         {showPlanModal && generatedPlan.length > 0 && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -342,7 +473,7 @@ export const PracticeResult = () => {
                                 去规则课堂
                               </button>
                               <button
-                                onClick={() => navigate('/mistakes')}
+                                onClick={() => navigate(`/practice/session?ids=${task.wrongQuestionIds.join(',')}`)}
                                 className="text-xs px-3 py-1.5 rounded-lg bg-danger-50 text-danger-700 hover:bg-danger-100 transition-colors flex items-center gap-1"
                               >
                                 <RotateCcw className="w-3 h-3" />
