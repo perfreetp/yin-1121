@@ -22,10 +22,11 @@ interface LearningState {
   mistakeRecords: MistakeRecord[];
   favorites: Favorite[];
   levelProgress: LevelProgress[];
+  sessionTrackedRecords: string[];
   
   markAsLearned: (id: string) => void;
-  addAnswerRecord: (record: Omit<UserAnswer, 'id' | 'answerTime'>) => void;
-  addMistake: (question: Question, userAnswer: string | string[], mistakeType?: MistakeType) => void;
+  addAnswerRecord: (record: Omit<UserAnswer, 'id' | 'answerTime'> & { sessionId?: string }) => boolean;
+  addMistake: (question: Question, userAnswer: string | string[], mistakeType?: MistakeType, sessionId?: string) => boolean;
   markMistakeAsMastered: (id: string) => void;
   incrementMistakeReviewCount: (id: string) => void;
   toggleFavorite: (target: Omit<Favorite, 'id' | 'createdAt'>) => void;
@@ -51,6 +52,7 @@ export const useLearningStore = create<LearningState>()(
       mistakeRecords: [],
       favorites: [],
       levelProgress: [],
+      sessionTrackedRecords: [],
       
       markAsLearned: (id: string) => {
         set(state => {
@@ -60,33 +62,60 @@ export const useLearningStore = create<LearningState>()(
       },
       
       addAnswerRecord: (record) => {
+        const state = get();
+        const uniqueKey = record.sessionId 
+          ? `${record.sessionId}::ans::${record.questionId}` 
+          : null;
+        
+        if (uniqueKey && state.sessionTrackedRecords.includes(uniqueKey)) {
+          return false;
+        }
+        
+        const newRecord = {
+          ...record,
+          id: generateId(),
+          answerTime: new Date().toISOString(),
+        };
+        delete (newRecord as any).sessionId;
+        
         set(state => ({
-          answerRecords: [
-            ...state.answerRecords,
-            {
-              ...record,
-              id: generateId(),
-              answerTime: new Date().toISOString(),
-            },
-          ],
+          answerRecords: [...state.answerRecords, newRecord],
+          sessionTrackedRecords: uniqueKey 
+            ? [...state.sessionTrackedRecords, uniqueKey]
+            : state.sessionTrackedRecords,
         }));
+        return true;
       },
       
-      addMistake: (question, userAnswer, mistakeType) => {
-        set(state => {
-          const type = mistakeType || (determineMistakeType(question) as MistakeType);
-          const newMistake: MistakeRecord = {
-            id: generateId(),
-            question,
-            userAnswer,
-            mistakeType: type,
-            mistakeTypeName: MistakeTypeNames[type],
-            isMastered: false,
-            answerTime: new Date().toISOString(),
-            reviewCount: 0,
-          };
-          return { mistakeRecords: [...state.mistakeRecords, newMistake] };
-        });
+      addMistake: (question, userAnswer, mistakeType, sessionId) => {
+        const state = get();
+        const uniqueKey = sessionId 
+          ? `${sessionId}::mistake::${question.id}`
+          : null;
+        
+        if (uniqueKey && state.sessionTrackedRecords.includes(uniqueKey)) {
+          return false;
+        }
+        
+        const type = mistakeType || (determineMistakeType(question) as MistakeType);
+        const newMistake: MistakeRecord = {
+          id: generateId(),
+          question,
+          userAnswer,
+          mistakeType: type,
+          mistakeTypeName: MistakeTypeNames[type],
+          isMastered: false,
+          answerTime: new Date().toISOString(),
+          reviewCount: 0,
+        };
+        
+        set(state => ({
+          mistakeRecords: [...state.mistakeRecords, newMistake],
+          sessionTrackedRecords: uniqueKey
+            ? [...state.sessionTrackedRecords, uniqueKey]
+            : state.sessionTrackedRecords,
+        }));
+        return true;
       },
       
       markMistakeAsMastered: (id: string) => {

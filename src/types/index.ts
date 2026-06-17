@@ -57,6 +57,7 @@ export interface Question {
   ruleBasis: string;
   difficulty: 1 | 2 | 3;
   isFavorite?: boolean;
+  subType?: 'materialReduction' | 'materialList' | 'informCommitment' | string;
 }
 
 export interface UserAnswer {

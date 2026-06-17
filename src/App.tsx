@@ -4,8 +4,10 @@ import { RulesList } from "@/pages/Rules";
 import { RulesDetail } from "@/pages/Rules/Detail";
 import { PracticeList } from "@/pages/Practice";
 import { PracticeSession } from "@/pages/Practice/Session";
+import { PracticeResult } from "@/pages/Practice/Result";
 import { LevelsList } from "@/pages/Levels";
 import { LevelSession } from "@/pages/Levels/Session";
+import { LevelReport } from "@/pages/Levels/Report";
 import { MistakesList } from "@/pages/Mistakes";
 import { MistakesAnalysis } from "@/pages/Mistakes/Analysis";
 import { ProfilePage } from "@/pages/Profile";
@@ -24,10 +26,12 @@ export default function App() {
         <Route path="/practice" element={<PracticeList />} />
         <Route path="/practice/knowledge/:knowledgeId" element={<PracticeList />} />
         <Route path="/practice/session" element={<PracticeSession />} />
+        <Route path="/practice/result" element={<PracticeResult />} />
         
         {/* 闯关审校 */}
         <Route path="/levels" element={<LevelsList />} />
         <Route path="/levels/:id" element={<LevelSession />} />
+        <Route path="/levels/:id/report" element={<LevelReport />} />
         
         {/* 错题本 */}
         <Route path="/mistakes" element={<MistakesList />} />

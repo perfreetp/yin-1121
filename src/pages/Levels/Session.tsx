@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
   ArrowLeft, 
@@ -10,7 +10,9 @@ import {
   RotateCcw,
   AlertTriangle,
   CheckCircle2,
-  XCircle
+  XCircle,
+  FileCheck,
+  Send
 } from 'lucide-react';
 import { PageLayout } from '@/components/layout/PageLayout';
 import { QuestionCard } from '@/components/business/QuestionCard';
@@ -28,28 +30,26 @@ export const LevelSession = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { 
+    sessionId,
     questions, 
     currentQuestionIndex, 
     userAnswers,
+    submittedQuestions,
+    startTime,
     startPractice, 
     nextQuestion, 
     prevQuestion,
     goToQuestion,
+    submitAll,
     reset
   } = usePracticeStore();
   const { addAnswerRecord, addMistake, updateLevelProgress } = useLearningStore();
   
   const [level, setLevel] = useState<ReturnType<typeof getLevelById>>(undefined);
   const [hasStarted, setHasStarted] = useState(false);
-  const [showResults, setShowResults] = useState(false);
-  const [results, setResults] = useState<{
-    correct: number;
-    total: number;
-    score: number;
-    timeSpent: number;
-    isPassed: boolean;
-  } | null>(null);
-  const [submittedAnswers, setSubmittedAnswers] = useState<Record<string, boolean>>({});
+  const [actualTimeSpent, setActualTimeSpent] = useState(0);
+  const timeSpentRef = useRef(0);
+  const timerIntervalRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (!id) {
@@ -66,7 +66,9 @@ export const LevelSession = () => {
     setLevel(levelData);
 
     return () => {
-      reset();
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
     };
   }, [id]);
 
@@ -80,99 +82,107 @@ export const LevelSession = () => {
 
     startPractice(selectedQuestions);
     setHasStarted(true);
-    setShowResults(false);
-    setResults(null);
-    setSubmittedAnswers({});
+    setActualTimeSpent(0);
+    timeSpentRef.current = 0;
+    
+    timerIntervalRef.current = window.setInterval(() => {
+      timeSpentRef.current += 1;
+      setActualTimeSpent(timeSpentRef.current);
+    }, 1000);
   };
 
-  const calculateResults = useCallback(() => {
+  const finishExam = useCallback((forceSubmitAll: boolean = true) => {
     if (!level) return;
-
-    const totalCorrect = questions.reduce((count, q) => {
-      const ans = userAnswers[q.id];
-      if (ans === undefined) return count;
-      const result = checkAnswer(q, ans);
-      return count + (result.isCorrect ? 1 : 0);
-    }, 0);
-
-    const timeSpent = level.timeLimit - 0;
-    const score = Math.round((totalCorrect / questions.length) * 100);
-    const isPassed = score >= level.passScore;
-
-    setResults({
-      correct: totalCorrect,
-      total: questions.length,
-      score,
-      timeSpent: level.timeLimit - 0,
-      isPassed,
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+    
+    const unanswered = questions.filter(q => !submittedQuestions[q.id]);
+    unanswered.forEach(q => {
+      if (userAnswers[q.id] !== undefined) {
+        const result = checkAnswer(q, userAnswers[q.id]);
+        addAnswerRecord({
+          questionId: q.id,
+          userAnswer: userAnswers[q.id] || '',
+          isCorrect: result.isCorrect,
+          timeSpent: 0,
+          sessionId: sessionId || undefined,
+        });
+        if (!result.isCorrect) {
+          const mistakeType = getMistakeType(q);
+          addMistake(q, userAnswers[q.id] || '', mistakeType as any, sessionId || undefined);
+        }
+      }
     });
-    setShowResults(true);
-
+    
+    const result = submitAll();
+    const isPassed = result.score >= level.passScore;
+    
     updateLevelProgress({
       levelId: level.id,
       isPassed,
-      bestScore: score,
-      bestTime: level.timeLimit - 0,
+      bestScore: result.score,
+      bestTime: actualTimeSpent,
       attemptDate: new Date().toISOString(),
     });
-  }, [level, questions, userAnswers, updateLevelProgress]);
+    
+    navigate(`/levels/${level.id}/report`);
+  }, [level, questions, submittedQuestions, userAnswers, sessionId, submitAll, actualTimeSpent, addAnswerRecord, addMistake, updateLevelProgress, navigate]);
 
   const handleTimeUp = useCallback(() => {
-    calculateResults();
-  }, [calculateResults]);
+    finishExam(true);
+  }, [finishExam]);
 
-  const handleQuestionSubmit = (questionId: string, result: { isCorrect: boolean; timeSpent: number }) => {
-    const question = questions.find(q => q.id === questionId);
+  const handleQuestionSubmit = (result: { isCorrect: boolean; timeSpent: number; score: number; maxScore: number; feedback?: string; matchedKeywords?: string[]; missingKeywords?: string[] }) => {
+    if (currentQuestionIndex < 0 || currentQuestionIndex >= questions.length) return;
+    const question = questions[currentQuestionIndex];
     if (!question) return;
 
-    const userAnswer = userAnswers[questionId];
+    const userAnswer = userAnswers[question.id];
     
-    addAnswerRecord({
-      questionId,
+    const isNewRecord = addAnswerRecord({
+      questionId: question.id,
       userAnswer: userAnswer || '',
       isCorrect: result.isCorrect,
       timeSpent: result.timeSpent,
+      sessionId: sessionId || undefined,
     });
-
-    if (!result.isCorrect) {
+    
+    if (isNewRecord && !result.isCorrect) {
       const mistakeType = getMistakeType(question);
       addMistake(
         question,
         userAnswer || '',
-        mistakeType as any
+        mistakeType as any,
+        sessionId || undefined
       );
     }
-
-    setSubmittedAnswers(prev => ({
-      ...prev,
-      [questionId]: true,
-    }));
   };
 
   const handleSubmitAll = () => {
     const unanswered = questions.filter(q => userAnswers[q.id] === undefined);
     if (unanswered.length > 0) {
-      if (!confirm(`还有 ${unanswered.length} 题未作答，确定要提交吗？`)) {
+      if (!confirm(`还有 ${unanswered.length} 题未作答，确定要提交吗？未作答将判为错误。`)) {
         return;
       }
     }
     
-    questions.forEach(q => {
-      if (userAnswers[q.id] !== undefined && !submittedAnswers[q.id]) {
-        const result = checkAnswer(q, userAnswers[q.id]);
-        handleQuestionSubmit(q.id, { ...result, timeSpent: 0 });
+    const unsubmitted = questions.filter(q => !submittedQuestions[q.id] && userAnswers[q.id] !== undefined);
+    if (unsubmitted.length > 0) {
+      if (!confirm(`还有 ${unsubmitted.length} 题已填写但未点击【提交判定】，系统将自动判定，确定继续吗？`)) {
+        return;
       }
-    });
-
-    calculateResults();
+    }
+    
+    finishExam(true);
   };
 
   const handleRetry = () => {
-    setHasStarted(false);
-    setShowResults(false);
-    setResults(null);
-    setSubmittedAnswers({});
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
     reset();
+    setHasStarted(false);
   };
 
   if (!level) {
@@ -185,7 +195,6 @@ export const LevelSession = () => {
     );
   }
 
-  // Start Screen
   if (!hasStarted) {
     return (
       <PageLayout>
@@ -219,13 +228,15 @@ export const LevelSession = () => {
             <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-8 text-left">
               <h4 className="font-semibold text-amber-800 mb-2 flex items-center gap-2">
                 <AlertTriangle className="w-5 h-5" />
-                注意事项
+                考核须知
               </h4>
-              <ul className="text-sm text-amber-700 space-y-1">
-                <li>• 答题开始后倒计时立即启动，中途退出视为放弃</li>
-                <li>• 最后30秒倒计时会变红提醒，请注意时间</li>
-                <li>• 时间到系统会自动提交当前答题结果</li>
-                <li>• 及格线以上视为通过，可解锁下一关卡</li>
+              <ul className="text-sm text-amber-700 space-y-1.5">
+                <li>• 答题开始后倒计时立即启动，请注意答题节奏</li>
+                <li>• 每道题需点击【提交判定】后才计入正式成绩</li>
+                <li>• 可在题目间自由切换，但最后30秒会有红色提醒</li>
+                <li>• 时间到系统会自动提交当前已判定的答题结果</li>
+                <li>• 达到及格线视为通过，可解锁更高等级关卡</li>
+                <li>• 考核结果将作为培训成绩记录在成绩面板中</li>
               </ul>
             </div>
 
@@ -235,7 +246,8 @@ export const LevelSession = () => {
                 返回选关
               </button>
               <button onClick={handleStart} className="btn-primary text-lg px-8 py-3">
-                开始挑战
+                <FileCheck className="w-5 h-5 mr-2" />
+                开始考核
               </button>
             </div>
           </div>
@@ -244,131 +256,9 @@ export const LevelSession = () => {
     );
   }
 
-  // Results Screen
-  if (showResults && results) {
-    const getScoreColor = (score: number) => {
-      if (score >= 90) return 'text-success-600';
-      if (score >= level.passScore) return 'text-accent-600';
-      return 'text-danger-600';
-    };
-
-    const getScoreBg = (score: number) => {
-      if (score >= 90) return 'from-success-500 to-success-700';
-      if (score >= level.passScore) return 'from-accent-500 to-accent-700';
-      return 'from-danger-500 to-danger-700';
-    };
-
-    return (
-      <PageLayout>
-        <div className="p-6 lg:p-8 max-w-3xl mx-auto">
-          <div className="card p-8 text-center animate-fade-in-up">
-            <div className={cn(
-              'w-24 h-24 rounded-full bg-gradient-to-br flex items-center justify-center mx-auto mb-6',
-              getScoreBg(results.score)
-            )}>
-              {results.isPassed ? (
-                <Trophy className="w-12 h-12 text-white" />
-              ) : (
-                <AlertTriangle className="w-12 h-12 text-white" />
-              )}
-            </div>
-            
-            <h1 className="text-3xl font-bold font-display mb-2">
-              {results.isPassed ? '挑战成功！' : '挑战失败'}
-            </h1>
-            <p className="text-slate-500 mb-2">
-              {results.isPassed 
-                ? '恭喜你通过了本关，继续挑战更高等级吧！' 
-                : `未达到及格线 ${level.passScore} 分，继续努力！`}
-            </p>
-            {results.isPassed && level.id < 3 && (
-              <p className="text-success-600 font-medium mb-6">
-                ✨ 已解锁「{getLevelById(level.id + 1)?.name}」
-              </p>
-            )}
-
-            <div className="grid grid-cols-3 gap-6 mb-8">
-              <div className="p-4 bg-slate-50 rounded-xl">
-                <p className="text-sm text-slate-500 mb-1">得分</p>
-                <p className={cn('text-3xl font-bold', getScoreColor(results.score))}>
-                  {results.score}分
-                </p>
-              </div>
-              <div className="p-4 bg-slate-50 rounded-xl">
-                <p className="text-sm text-slate-500 mb-1">正确率</p>
-                <p className="text-3xl font-bold text-primary-600">
-                  {results.correct}/{results.total}
-                </p>
-              </div>
-              <div className="p-4 bg-slate-50 rounded-xl">
-                <p className="text-sm text-slate-500 mb-1">用时</p>
-                <p className="text-3xl font-bold text-accent-600">
-                  {formatTime(results.timeSpent)}
-                </p>
-              </div>
-            </div>
-
-            <div className="mb-8">
-              <h3 className="font-semibold text-slate-900 mb-4">答题概览</h3>
-              <div className="grid grid-cols-6 md:grid-cols-9 gap-2">
-                {questions.map((q, index) => {
-                  const userAnswer = userAnswers[q.id];
-                  const isCorrect = userAnswer !== undefined && checkAnswer(q, userAnswer).isCorrect;
-                  
-                  return (
-                    <button
-                      key={q.id}
-                      onClick={() => goToQuestion(index)}
-                      className={cn(
-                        'w-full aspect-square rounded-lg flex items-center justify-center text-sm font-medium transition-all',
-                        userAnswer === undefined
-                          ? 'bg-slate-100 text-slate-400'
-                          : isCorrect 
-                            ? 'bg-success-100 text-success-700 hover:bg-success-200' 
-                            : 'bg-danger-100 text-danger-700 hover:bg-danger-200'
-                      )}
-                    >
-                      {userAnswer === undefined ? '-' : index + 1}
-                    </button>
-                  );
-                })}
-              </div>
-              <div className="flex justify-center gap-4 mt-4 text-sm">
-                <span className="flex items-center gap-1">
-                  <span className="w-4 h-4 rounded bg-success-100" /> 正确
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-4 h-4 rounded bg-danger-100" /> 错误
-                </span>
-                <span className="flex items-center gap-1">
-                  <span className="w-4 h-4 rounded bg-slate-100" /> 未答
-                </span>
-              </div>
-            </div>
-
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button onClick={handleRetry} className="btn-secondary">
-                <RotateCcw className="w-4 h-4 mr-2" />
-                再试一次
-              </button>
-              <button onClick={() => navigate('/levels')} className="btn-secondary">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回选关
-              </button>
-              <button onClick={() => navigate('/')} className="btn-primary">
-                <Home className="w-4 h-4 mr-2" />
-                返回首页
-              </button>
-            </div>
-          </div>
-        </div>
-      </PageLayout>
-    );
-  }
-
-  // Quiz Screen
   const currentQuestion = questions[currentQuestionIndex];
   const answeredCount = Object.keys(userAnswers).length;
+  const submittedCount = Object.keys(submittedQuestions).length;
 
   return (
     <PageLayout>
@@ -377,17 +267,34 @@ export const LevelSession = () => {
         <div className="flex items-center justify-between mb-6">
           <button 
             onClick={() => {
-              if (confirm('确定要退出吗？当前进度将不会保存。')) {
+              if (confirm('确定要退出吗？当前考核将视为放弃，进度不会保留。')) {
+                if (timerIntervalRef.current) {
+                  clearInterval(timerIntervalRef.current);
+                }
+                reset();
                 navigate('/levels');
               }
             }} 
             className="btn-secondary"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
-            退出
+            退出考核
           </button>
           
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 text-xs">
+              <span className="text-slate-600">
+                <CheckCircle2 className="w-3.5 h-3.5 inline mr-1 text-success-500" />
+                已判 {submittedCount}/{questions.length}
+              </span>
+              <span className="text-slate-600">
+                <XCircle className="w-3.5 h-3.5 inline mr-1 text-primary-500" />
+                已填 {answeredCount - submittedCount}
+              </span>
+              <span className="text-slate-600">
+                用时 {formatTime(actualTimeSpent)}
+              </span>
+            </div>
             <span className="font-medium text-slate-700">{level.name}</span>
             <Countdown 
               seconds={level.timeLimit} 
@@ -403,9 +310,20 @@ export const LevelSession = () => {
             <span className="text-sm text-slate-600">
               第 {currentQuestionIndex + 1} / {questions.length} 题
             </span>
-            <span className="text-sm text-slate-600">
-              已答 {answeredCount} 题
-            </span>
+            <div className="flex items-center gap-3 text-sm text-slate-600">
+              <span className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded bg-success-100" /> 判定正确
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded bg-danger-100" /> 判定错误
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded bg-primary-100" /> 已填待判
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-3 h-3 rounded bg-slate-200" /> 未作答
+              </span>
+            </div>
           </div>
           <ProgressBar 
             value={currentQuestionIndex + 1} 
@@ -413,15 +331,14 @@ export const LevelSession = () => {
             showLabel={false} 
           />
           
-          {/* Question Navigator */}
           <div className="mt-4 flex flex-wrap gap-2">
             {questions.map((q, index) => {
               const isAnswered = userAnswers[q.id] !== undefined;
-              const isCurrent = index === currentQuestionIndex;
-              const isSubmitted = submittedAnswers[q.id];
-              const isCorrect = isSubmitted && userAnswers[q.id] !== undefined 
-                ? checkAnswer(q, userAnswers[q.id]).isCorrect 
+              const isSubmitted = submittedQuestions[q.id];
+              const isCorrect = isSubmitted && userAnswers[q.id] !== undefined
+                ? checkAnswer(q, userAnswers[q.id]).isCorrect
                 : null;
+              const isCurrent = index === currentQuestionIndex;
               
               return (
                 <button
@@ -429,10 +346,10 @@ export const LevelSession = () => {
                   onClick={() => goToQuestion(index)}
                   className={cn(
                     'w-8 h-8 rounded-lg text-sm font-medium transition-all',
-                    isCurrent && 'ring-2 ring-primary-500',
-                    isSubmitted && isCorrect === true && 'bg-success-100 text-success-700',
-                    isSubmitted && isCorrect === false && 'bg-danger-100 text-danger-700',
-                    !isSubmitted && isAnswered && 'bg-primary-100 text-primary-700',
+                    isCurrent && 'ring-2 ring-primary-500 ring-offset-2',
+                    isSubmitted && isCorrect === true && 'bg-success-100 text-success-700 hover:bg-success-200',
+                    isSubmitted && isCorrect === false && 'bg-danger-100 text-danger-700 hover:bg-danger-200',
+                    !isSubmitted && isAnswered && 'bg-primary-100 text-primary-700 hover:bg-primary-200',
                     !isAnswered && !isCurrent && 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                   )}
                 >
@@ -443,19 +360,17 @@ export const LevelSession = () => {
           </div>
         </div>
 
-        {/* Question Card */}
         {currentQuestion && (
-          <div className="animate-fade-in-up">
+          <div className="animate-fade-in-up" key={currentQuestion.id}>
             <QuestionCard
               question={currentQuestion}
               questionNumber={currentQuestionIndex + 1}
-              showFeedback={submittedAnswers[currentQuestion.id]}
-              onSubmit={(result) => handleQuestionSubmit(currentQuestion.id, result)}
+              showFeedback={submittedQuestions[currentQuestion.id]}
+              onSubmit={handleQuestionSubmit}
             />
           </div>
         )}
 
-        {/* Navigation */}
         <div className="flex justify-between mt-6">
           <button
             onClick={prevQuestion}
@@ -472,24 +387,33 @@ export const LevelSession = () => {
           {currentQuestionIndex >= questions.length - 1 ? (
             <button
               onClick={handleSubmitAll}
-              className="btn-success"
+              className="btn-success flex items-center gap-2"
             >
-              提交答卷
+              <Send className="w-4 h-4" />
+              提交考卷
             </button>
           ) : (
             <button
               onClick={nextQuestion}
-              disabled={!userAnswers[currentQuestion?.id || '']}
-              className={cn(
-                'btn-primary',
-                !userAnswers[currentQuestion?.id || ''] && 'opacity-50 cursor-not-allowed'
-              )}
+              className="btn-primary"
             >
               下一题
               <ChevronRight className="w-4 h-4 ml-2" />
             </button>
           )}
         </div>
+        
+        {currentQuestionIndex < questions.length - 1 && (
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={handleSubmitAll}
+              className="btn-secondary text-sm"
+            >
+              <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+              提前交卷
+            </button>
+          </div>
+        )}
       </div>
     </PageLayout>
   );

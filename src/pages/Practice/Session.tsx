@@ -9,7 +9,9 @@ import {
   XCircle,
   Home,
   RotateCcw,
-  Trophy
+  Trophy,
+  BookOpen,
+  ListChecks
 } from 'lucide-react';
 import { PageLayout } from '@/components/layout/PageLayout';
 import { QuestionCard } from '@/components/business/QuestionCard';
@@ -17,21 +19,24 @@ import { ProgressBar } from '@/components/common/ProgressBar';
 import { questionList } from '@/data/questions';
 import { usePracticeStore } from '@/store/usePracticeStore';
 import { useLearningStore } from '@/store/useLearningStore';
-import { getMistakeType, checkAnswer } from '@/utils/calculation';
+import { getMistakeType, checkAnswer, groupQuestionsByCategory, generateWeaknessSuggestions } from '@/utils/calculation';
 import { cn } from '@/lib/utils';
 
 export const PracticeSession = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { 
+    sessionId,
     questions, 
     currentQuestionIndex, 
     userAnswers,
+    submittedQuestions,
     startTime,
     startPractice, 
     nextQuestion, 
     prevQuestion,
     goToQuestion,
+    submitAll,
     reset
   } = usePracticeStore();
   const { addAnswerRecord, addMistake } = useLearningStore();
@@ -42,9 +47,11 @@ export const PracticeSession = () => {
     total: number;
     score: number;
     timeSpent: number;
+    detailResults: Array<{ questionId: string; isCorrect: boolean; score: number; maxScore: number }>;
   } | null>(null);
 
   const questionIds = searchParams.get('ids')?.split(',') || [];
+  const savedAnswers = searchParams.get('savedAnswers');
 
   useEffect(() => {
     const selectedQuestions = questionIds
@@ -58,56 +65,76 @@ export const PracticeSession = () => {
     }
 
     return () => {
-      reset();
     };
   }, [questionIds.join(',')]);
 
+  useEffect(() => {
+    if (savedAnswers && questions.length === 0) {
+      const params = new URLSearchParams(searchParams);
+      params.delete('savedAnswers');
+      navigate('/practice/session?' + params.toString(), { replace: true });
+    }
+  }, [savedAnswers, questions.length]);
+
   const currentQuestion = questions[currentQuestionIndex];
   const answeredCount = Object.keys(userAnswers).length;
+  const submittedCount = Object.keys(submittedQuestions).length;
 
-  const handleQuestionSubmit = (result: { isCorrect: boolean; timeSpent: number }) => {
+  const categoryGroups = useMemo(() => {
+    if (questions.length === 0) return [];
+    return groupQuestionsByCategory(questions, userAnswers);
+  }, [questions, userAnswers]);
+
+  const suggestions = useMemo(() => {
+    if (categoryGroups.length === 0) return [];
+    return generateWeaknessSuggestions(categoryGroups);
+  }, [categoryGroups]);
+
+  const handleQuestionSubmit = (result: { isCorrect: boolean; timeSpent: number; score: number; maxScore: number; feedback?: string; matchedKeywords?: string[]; missingKeywords?: string[] }) => {
     if (!currentQuestion) return;
-
+    
     const userAnswer = userAnswers[currentQuestion.id];
     
-    addAnswerRecord({
+    const isNewRecord = addAnswerRecord({
       questionId: currentQuestion.id,
       userAnswer: userAnswer || '',
       isCorrect: result.isCorrect,
       timeSpent: result.timeSpent,
+      sessionId: sessionId || undefined,
     });
-
-    if (!result.isCorrect) {
+    
+    if (isNewRecord && !result.isCorrect) {
       const mistakeType = getMistakeType(currentQuestion);
       addMistake(
         currentQuestion,
         userAnswer || '',
-        mistakeType as any
+        mistakeType as any,
+        sessionId || undefined
       );
     }
 
-    if (currentQuestionIndex >= questions.length - 1) {
-      const totalTime = startTime ? Math.floor((Date.now() - startTime) / 1000) : 0;
-      const correct = Object.values(userAnswers).filter((_, idx) => {
-        const q = questions[idx];
-        return q && userAnswers[q.id] !== undefined && result.isCorrect;
-      }).length;
-
-      const totalCorrect = questions.reduce((count, q) => {
-        const ans = userAnswers[q.id];
-        if (ans === undefined) return count;
-        const result = checkAnswer(q, ans);
-        return count + (result.isCorrect ? 1 : 0);
-      }, 0);
-
-      setResults({
-        correct: totalCorrect,
-        total: questions.length,
-        score: Math.round((totalCorrect / questions.length) * 100),
-        timeSpent: totalTime,
-      });
-      setShowResults(true);
+    const allSubmitted = questions.length > 0 && 
+      questions.every(q => submittedQuestions[q.id]);
+    
+    if (allSubmitted || currentQuestionIndex >= questions.length - 1) {
+      if (allSubmitted) {
+        finishSession();
+      }
     }
+  };
+
+  const finishSession = () => {
+    if (!startTime) return;
+    
+    const result = submitAll();
+    setResults({
+      correct: result.correct,
+      total: result.total,
+      score: result.score,
+      timeSpent: result.timeSpent,
+      detailResults: result.detailResults,
+    });
+    setShowResults(true);
   };
 
   const handleNext = () => {
@@ -129,6 +156,33 @@ export const PracticeSession = () => {
     startPractice(selectedQuestions);
     setShowResults(false);
     setResults(null);
+  };
+
+  const handleSubmitAll = () => {
+    const unanswered = questions.filter(q => !submittedQuestions[q.id]);
+    if (unanswered.length > 0) {
+      if (!confirm(`还有 ${unanswered.length} 题未提交判定，确定要结束吗？`)) {
+        return;
+      }
+    }
+    
+    unanswered.forEach(q => {
+      if (userAnswers[q.id] !== undefined) {
+        addAnswerRecord({
+          questionId: q.id,
+          userAnswer: userAnswers[q.id] || '',
+          isCorrect: checkAnswer(q, userAnswers[q.id]).isCorrect,
+          timeSpent: 0,
+          sessionId: sessionId || undefined,
+        });
+      }
+    });
+    
+    finishSession();
+  };
+
+  const goToReviewPage = () => {
+    navigate('/practice/result');
   };
 
   if (questions.length === 0) {
@@ -160,6 +214,11 @@ export const PracticeSession = () => {
       return '需要多加练习，建议回顾相关知识点！';
     };
 
+    const submittedAnswers = questions.filter(q => submittedQuestions[q.id]);
+    const wrongCount = submittedAnswers.filter(q => 
+      !checkAnswer(q, userAnswers[q.id] || '').isCorrect
+    ).length;
+
     return (
       <PageLayout>
         <div className="p-6 lg:p-8 max-w-3xl mx-auto">
@@ -174,78 +233,164 @@ export const PracticeSession = () => {
             <h1 className="text-3xl font-bold font-display mb-2">练习完成！</h1>
             <p className="text-slate-500 mb-8">{getEncouragement(results.score)}</p>
 
-            <div className="grid grid-cols-3 gap-6 mb-8">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
               <div className="p-4 bg-slate-50 rounded-xl">
-                <p className="text-sm text-slate-500 mb-1">得分</p>
-                <p className={cn('text-3xl font-bold', getScoreColor(results.score))}>
+                <p className="text-sm text-slate-500 mb-1">综合得分</p>
+                <p className={cn('text-2xl font-bold', getScoreColor(results.score))}>
                   {results.score}分
                 </p>
               </div>
               <div className="p-4 bg-slate-50 rounded-xl">
-                <p className="text-sm text-slate-500 mb-1">正确率</p>
-                <p className="text-3xl font-bold text-primary-600">
-                  {results.correct}/{results.total}
+                <p className="text-sm text-slate-500 mb-1">判定正确</p>
+                <p className="text-2xl font-bold text-success-600">
+                  {results.correct}
                 </p>
               </div>
               <div className="p-4 bg-slate-50 rounded-xl">
-                <p className="text-sm text-slate-500 mb-1">用时</p>
-                <p className="text-3xl font-bold text-accent-600">
+                <p className="text-sm text-slate-500 mb-1">判定错误</p>
+                <p className="text-2xl font-bold text-danger-600">
+                  {wrongCount}
+                </p>
+              </div>
+              <div className="p-4 bg-slate-50 rounded-xl">
+                <p className="text-sm text-slate-500 mb-1">实际用时</p>
+                <p className="text-2xl font-bold text-accent-600">
                   {Math.floor(results.timeSpent / 60)}分{results.timeSpent % 60}秒
                 </p>
               </div>
             </div>
+
+            {categoryGroups.length > 0 && (
+              <div className="mb-8 text-left">
+                <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                  <ListChecks className="w-5 h-5 text-primary-500" />
+                  各类别掌握情况
+                </h3>
+                <div className="space-y-3">
+                  {categoryGroups.slice(0, 5).map((g) => {
+                    const accuracy = g.totalCount > 0 
+                      ? Math.round((g.correctCount / g.totalCount) * 100) 
+                      : 0;
+                    return (
+                      <div key={g.knowledgeId} className="p-3 bg-slate-50 rounded-lg">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-sm font-medium text-slate-800">
+                            {g.categoryName}
+                            <span className="text-xs text-slate-500 ml-2">（{g.knowledgeTitle}）</span>
+                          </span>
+                          <span className={cn(
+                            'text-sm font-bold',
+                            accuracy >= 80 && 'text-success-600',
+                            accuracy >= 60 && accuracy < 80 && 'text-accent-600',
+                            accuracy < 60 && 'text-danger-600'
+                          )}>
+                            {accuracy}%
+                          </span>
+                        </div>
+                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                          <div 
+                            className={cn(
+                              'h-full rounded-full transition-all duration-500',
+                              accuracy >= 80 && 'bg-success-500',
+                              accuracy >= 60 && accuracy < 80 && 'bg-accent-500',
+                              accuracy < 60 && 'bg-danger-500'
+                            )}
+                            style={{ width: `${accuracy}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="mb-8">
               <h3 className="font-semibold text-slate-900 mb-4">答题概览</h3>
               <div className="grid grid-cols-6 md:grid-cols-9 gap-2">
                 {questions.map((q, index) => {
                   const userAnswer = userAnswers[q.id];
-                  const check = (correct: string | string[], ans: string | string[]): boolean => {
-                    if (Array.isArray(correct) && Array.isArray(ans)) {
-                      return correct.every((a, i) => a.toLowerCase().trim() === (ans[i] || '').toLowerCase().trim());
-                    }
-                    if (!Array.isArray(correct) && !Array.isArray(ans)) {
-                      return correct.toLowerCase().trim() === ans.toLowerCase().trim();
-                    }
-                    if (Array.isArray(correct) && !Array.isArray(ans)) {
-                      return correct.includes(ans.trim());
-                    }
-                    return false;
-                  };
-                  const isCorrect = userAnswer !== undefined && check(q.correctAnswer, userAnswer);
+                  const isSubmitted = submittedQuestions[q.id];
+                  const isCorrect = isSubmitted && userAnswer !== undefined 
+                    ? checkAnswer(q, userAnswer).isCorrect 
+                    : false;
                   
                   return (
                     <button
                       key={q.id}
-                      onClick={() => goToQuestion(index)}
+                      onClick={() => {
+                        setShowResults(false);
+                        goToQuestion(index);
+                      }}
                       className={cn(
                         'w-full aspect-square rounded-lg flex items-center justify-center text-sm font-medium transition-all',
-                        isCorrect 
+                        !isSubmitted && 'bg-slate-100 text-slate-400',
+                        isSubmitted && isCorrect 
                           ? 'bg-success-100 text-success-700 hover:bg-success-200' 
-                          : 'bg-danger-100 text-danger-700 hover:bg-danger-200'
+                          : isSubmitted && 'bg-danger-100 text-danger-700 hover:bg-danger-200'
                       )}
                     >
-                      {index + 1}
+                      {!isSubmitted ? '-' : index + 1}
                     </button>
                   );
                 })}
               </div>
+              <div className="flex justify-center gap-4 mt-4 text-xs text-slate-500">
+                <span className="flex items-center gap-1">
+                  <span className="w-4 h-4 rounded bg-success-100" /> 正确
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-4 h-4 rounded bg-danger-100" /> 错误
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-4 h-4 rounded bg-slate-100" /> 未判定
+                </span>
+              </div>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button onClick={handleRetry} className="btn-secondary">
-                <RotateCcw className="w-4 h-4 mr-2" />
-                再练一次
+            {wrongCount > 0 && (
+              <button 
+                onClick={goToReviewPage} 
+                className="w-full btn-primary mb-4 flex items-center justify-center gap-2"
+              >
+                <BookOpen className="w-4 h-4" />
+                查看错因回顾 →
               </button>
-              <button onClick={() => navigate('/practice')} className="btn-secondary">
-                <ArrowLeft className="w-4 h-4 mr-2" />
-                返回选题
-              </button>
-              <button onClick={() => navigate('/')} className="btn-primary">
-                <Home className="w-4 h-4 mr-2" />
-                返回首页
-              </button>
+            )}
+          </div>
+          
+          {wrongCount > 0 && (
+            <div className="card p-6 mt-6 animate-fade-in-up">
+              <h3 className="font-semibold text-slate-900 mb-3 flex items-center gap-2">
+                <CheckCircle2 className="w-5 h-5 text-accent-500" />
+                学习建议
+              </h3>
+              <ul className="space-y-2">
+                {suggestions.map((s, i) => (
+                  <li key={i} className="text-sm text-slate-700 flex items-start gap-2">
+                    <span className="w-5 h-5 rounded-full bg-accent-100 text-accent-700 flex items-center justify-center shrink-0 text-xs font-bold mt-0.5">
+                      {i + 1}
+                    </span>
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
+          )}
+
+          <div className="flex flex-wrap gap-3 justify-center mt-6">
+            <button onClick={handleRetry} className="btn-secondary">
+              <RotateCcw className="w-4 h-4 mr-2" />
+              再练一次
+            </button>
+            <button onClick={() => navigate('/practice')} className="btn-secondary">
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              返回选题
+            </button>
+            <button onClick={() => navigate('/')} className="btn-primary">
+              <Home className="w-4 h-4 mr-2" />
+              返回首页
+            </button>
           </div>
         </div>
       </PageLayout>
@@ -258,7 +403,11 @@ export const PracticeSession = () => {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <button 
-            onClick={() => navigate('/practice')} 
+            onClick={() => {
+              if (confirm('确定要退出吗？未提交的判定结果可以稍后继续。')) {
+                navigate('/practice');
+              }
+            }} 
             className="btn-secondary"
           >
             <ArrowLeft className="w-4 h-4 mr-2" />
@@ -266,6 +415,16 @@ export const PracticeSession = () => {
           </button>
           
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 text-xs">
+              <span className="text-slate-600">
+                <CheckCircle2 className="w-3.5 h-3.5 inline mr-1 text-success-500" />
+                已判 {submittedCount}/{questions.length}
+              </span>
+              <span className="text-slate-600">
+                <XCircle className="w-3.5 h-3.5 inline mr-1 text-danger-500" />
+                未判 {questions.length - submittedCount}
+              </span>
+            </div>
             <div className="flex items-center gap-2 text-slate-600">
               <Clock className="w-5 h-5" />
               <span className="font-medium">
@@ -283,7 +442,7 @@ export const PracticeSession = () => {
               第 {currentQuestionIndex + 1} / {questions.length} 题
             </span>
             <span className="text-sm text-slate-600">
-              已答 {answeredCount} 题
+              已作答 {answeredCount} 题
             </span>
           </div>
           <ProgressBar 
@@ -296,6 +455,10 @@ export const PracticeSession = () => {
           <div className="mt-4 flex flex-wrap gap-2">
             {questions.map((q, index) => {
               const isAnswered = userAnswers[q.id] !== undefined;
+              const isSubmitted = submittedQuestions[q.id];
+              const isCorrect = isSubmitted && userAnswers[q.id] !== undefined
+                ? checkAnswer(q, userAnswers[q.id]).isCorrect
+                : null;
               const isCurrent = index === currentQuestionIndex;
               
               return (
@@ -305,9 +468,10 @@ export const PracticeSession = () => {
                   className={cn(
                     'w-8 h-8 rounded-lg text-sm font-medium transition-all',
                     isCurrent && 'ring-2 ring-primary-500',
-                    isAnswered
-                      ? 'bg-primary-100 text-primary-700'
-                      : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                    isSubmitted && isCorrect === true && 'bg-success-100 text-success-700',
+                    isSubmitted && isCorrect === false && 'bg-danger-100 text-danger-700',
+                    !isSubmitted && isAnswered && 'bg-primary-100 text-primary-700',
+                    !isAnswered && !isCurrent && 'bg-slate-100 text-slate-500 hover:bg-slate-200'
                   )}
                 >
                   {index + 1}
@@ -319,10 +483,11 @@ export const PracticeSession = () => {
 
         {/* Question Card */}
         {currentQuestion && (
-          <div className="animate-fade-in-up">
+          <div className="animate-fade-in-up" key={currentQuestion.id}>
             <QuestionCard
               question={currentQuestion}
               questionNumber={currentQuestionIndex + 1}
+              showFeedback={submittedQuestions[currentQuestion.id]}
               onSubmit={handleQuestionSubmit}
             />
           </div>
@@ -342,17 +507,26 @@ export const PracticeSession = () => {
             上一题
           </button>
           
-          <button
-            onClick={handleNext}
-            disabled={currentQuestionIndex >= questions.length - 1 || !userAnswers[currentQuestion?.id || '']}
-            className={cn(
-              'btn-primary',
-              (currentQuestionIndex >= questions.length - 1 || !userAnswers[currentQuestion?.id || '']) && 'opacity-50 cursor-not-allowed'
-            )}
-          >
-            下一题
-            <ChevronRight className="w-4 h-4 ml-2" />
-          </button>
+          {currentQuestionIndex >= questions.length - 1 ? (
+            <button
+              onClick={handleSubmitAll}
+              className="btn-success"
+            >
+              结束练习查看结果
+            </button>
+          ) : (
+            <button
+              onClick={handleNext}
+              disabled={!userAnswers[currentQuestion?.id || '']}
+              className={cn(
+                'btn-primary',
+                !userAnswers[currentQuestion?.id || ''] && 'opacity-50 cursor-not-allowed'
+              )}
+            >
+              下一题
+              <ChevronRight className="w-4 h-4 ml-2" />
+            </button>
+          )}
         </div>
       </div>
     </PageLayout>

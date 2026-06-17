@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Star, Bookmark, HelpCircle } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Star, Bookmark, HelpCircle, CheckCircle2, XCircle, AlertCircle, Lightbulb } from 'lucide-react';
 import type { Question } from '@/types';
 import { getDifficultyLabel, getDifficultyColor } from '@/utils/format';
 import { useLearningStore } from '@/store/useLearningStore';
@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 interface QuestionCardProps {
   question: Question;
   showFeedback?: boolean;
-  onSubmit?: (result: { isCorrect: boolean; timeSpent: number }) => void;
+  onSubmit?: (result: { isCorrect: boolean; timeSpent: number; score: number; maxScore: number; feedback?: string; matchedKeywords?: string[]; missingKeywords?: string[] }) => void;
   isReadonly?: boolean;
   questionNumber?: number;
 }
@@ -23,31 +23,77 @@ export const QuestionCard = ({
   questionNumber
 }: QuestionCardProps) => {
   const { favorites, toggleFavorite } = useLearningStore();
-  const { userAnswers, setAnswer, submitCurrent } = usePracticeStore();
-  const [localAnswer, setLocalAnswer] = useState<string | string[]>(
-    Array.isArray(question.correctAnswer) ? [] : ''
-  );
-  const [hasSubmitted, setHasSubmitted] = useState(false);
-  const [feedback, setFeedback] = useState<{
-    isCorrect: boolean;
-    correctAnswer: string | string[];
-    timeSpent: number;
-  } | null>(null);
-
+  const { 
+    userAnswers, 
+    setAnswer, 
+    submitCurrent,
+    isQuestionSubmitted,
+    getSubmissionResult
+  } = usePracticeStore();
+  
   const isFavorite = favorites.some(
     f => f.targetType === 'question' && f.targetId === question.id
   );
   const userAnswer = userAnswers[question.id];
+  const submittedFromStore = isQuestionSubmitted(question.id);
+  const storeResult = getSubmissionResult(question.id);
+  
+  const [localAnswer, setLocalAnswer] = useState<string | string[]>(
+    Array.isArray(question.correctAnswer) ? [] : ''
+  );
+  const [hasSubmitted, setHasSubmitted] = useState(submittedFromStore);
+  const [feedback, setFeedback] = useState<{
+    isCorrect: boolean;
+    correctAnswer: string | string[];
+    timeSpent: number;
+    score: number;
+    maxScore: number;
+    feedback?: string;
+    matchedKeywords?: string[];
+    missingKeywords?: string[];
+  } | null>(null);
 
   useEffect(() => {
     if (userAnswer !== undefined) {
-      setLocalAnswer(userAnswer);
+      if (Array.isArray(userAnswer)) {
+        setLocalAnswer([...userAnswer]);
+      } else {
+        setLocalAnswer(userAnswer);
+      }
     } else {
       setLocalAnswer(Array.isArray(question.correctAnswer) ? [] : '');
     }
-    setHasSubmitted(false);
-    setFeedback(null);
-  }, [question.id, userAnswer]);
+  }, [question.id]);
+
+  useEffect(() => {
+    if (submittedFromStore && storeResult && !hasSubmitted) {
+      setHasSubmitted(true);
+      setFeedback({
+        isCorrect: storeResult.isCorrect,
+        correctAnswer: question.correctAnswer,
+        timeSpent: 0,
+        score: storeResult.score,
+        maxScore: storeResult.maxScore,
+        feedback: storeResult.feedback,
+        matchedKeywords: storeResult.matchedKeywords,
+        missingKeywords: storeResult.missingKeywords,
+      });
+    }
+  }, [submittedFromStore, storeResult, hasSubmitted, question.correctAnswer]);
+
+  const blankIndexes = useMemo(() => {
+    if (question.type !== 'fillBlank') return [] as number[];
+    const lines = question.content.split('\n');
+    const indexes: number[] = [];
+    let globalBlankIdx = 0;
+    lines.forEach(line => {
+      const parts = line.split('______');
+      for (let i = 0; i < parts.length - 1; i++) {
+        indexes.push(globalBlankIdx++);
+      }
+    });
+    return indexes;
+  }, [question.content, question.type]);
 
   const handleFavoriteClick = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -75,10 +121,16 @@ export const QuestionCard = ({
     setAnswer(question.id, newAnswer);
   };
 
-  const handleFillBlank = (index: number, value: string) => {
+  const handleFillBlank = (globalBlankIdx: number, value: string) => {
     if (isReadonly || hasSubmitted) return;
-    const current = Array.isArray(localAnswer) ? [...localAnswer] : [];
-    current[index] = value;
+    const total = Array.isArray(question.correctAnswer) ? question.correctAnswer.length : 1;
+    const current = Array.isArray(localAnswer) 
+      ? [...localAnswer] 
+      : new Array(total).fill('');
+    while (current.length < total) {
+      current.push('');
+    }
+    current[globalBlankIdx] = value;
     setLocalAnswer(current);
     setAnswer(question.id, current);
   };
@@ -93,21 +145,32 @@ export const QuestionCard = ({
     if (isReadonly || hasSubmitted) return;
     
     const answer = Array.isArray(localAnswer) 
-      ? localAnswer.filter(v => v.trim() !== '') 
+      ? localAnswer.filter(v => v && v.trim() !== '') 
       : localAnswer;
     
-    if (Array.isArray(answer) && answer.length === 0) {
+    if (Array.isArray(answer) && question.type === 'fillBlank') {
+      const total = Array.isArray(question.correctAnswer) ? question.correctAnswer.length : 0;
+      const filled = Array.isArray(localAnswer) 
+        ? localAnswer.filter(v => v && v.trim() !== '').length 
+        : 0;
+      if (filled < total) {
+        alert(`请填写完整所有空格（已填${filled}/${total}）`);
+        return;
+      }
+    } else if (Array.isArray(answer) && answer.length === 0) {
       alert('请填写答案');
       return;
-    }
-    if (typeof answer === 'string' && answer.trim() === '') {
+    } else if (typeof answer === 'string' && answer.trim() === '') {
       alert('请填写答案');
       return;
     }
 
     const result = submitCurrent();
     if (result) {
-      setFeedback(result);
+      setFeedback({
+        ...result,
+        correctAnswer: result.correctAnswer,
+      });
       setHasSubmitted(true);
       onSubmit?.(result);
     }
@@ -117,37 +180,47 @@ export const QuestionCard = ({
     const contentLines = question.content.split('\n');
     
     if (question.type === 'fillBlank') {
+      let globalBlankIdx = 0;
+      const totalBlanks = blankIndexes.length;
       const blanks = contentLines.map((line, lineIndex) => {
         const parts = line.split('______');
-        return (
-          <div key={lineIndex} className="flex flex-wrap items-center gap-2">
-            {parts.map((part, partIndex) => (
-              <span key={partIndex} className="flex items-center gap-2">
-                <span className="whitespace-pre-wrap">{part}</span>
-                {partIndex < parts.length - 1 && (
-                  <input
-                    type="text"
-                    value={Array.isArray(localAnswer) ? localAnswer[Math.floor((lineIndex * 10 + partIndex) / 10)] || '' : ''}
-                    onChange={(e) => handleFillBlank(partIndex, e.target.value)}
-                    disabled={isReadonly || hasSubmitted}
-                    className={cn(
-                      'w-32 px-3 py-1.5 border-b-2 border-primary-300 bg-transparent text-center focus:outline-none focus:border-primary-600 font-medium',
-                      hasSubmitted && feedback && !feedback.isCorrect && 'border-danger-500 bg-danger-50',
-                      hasSubmitted && feedback && feedback.isCorrect && 'border-success-500 bg-success-50'
-                    )}
-                    placeholder="______"
-                  />
+        const lineBlanks: JSX.Element[] = [];
+        for (let partIndex = 0; partIndex < parts.length; partIndex++) {
+          lineBlanks.push(
+            <span key={`${lineIndex}-${partIndex}-t`} className="whitespace-pre-wrap">{parts[partIndex]}</span>
+          );
+          if (partIndex < parts.length - 1) {
+            const currentBlankIdx = globalBlankIdx++;
+            const ansArr = Array.isArray(localAnswer) ? localAnswer : [];
+            const val = ansArr[currentBlankIdx] || '';
+            lineBlanks.push(
+              <input
+                key={`${lineIndex}-${partIndex}-i`}
+                type="text"
+                value={val}
+                onChange={(e) => handleFillBlank(currentBlankIdx, e.target.value)}
+                disabled={isReadonly || hasSubmitted}
+                className={cn(
+                  'w-32 px-3 py-1.5 border-b-2 border-primary-300 bg-transparent text-center focus:outline-none focus:border-primary-600 font-medium transition-colors',
+                  hasSubmitted && feedback && !feedback.isCorrect && 'border-danger-500 bg-danger-50',
+                  hasSubmitted && feedback && feedback.isCorrect && 'border-success-500 bg-success-50'
                 )}
-              </span>
-            ))}
+                placeholder={`第${currentBlankIdx + 1}/${totalBlanks}空`}
+              />
+            );
+          }
+        }
+        return (
+          <div key={lineIndex} className="flex flex-wrap items-center gap-x-1 gap-y-2">
+            {lineBlanks}
           </div>
         );
       });
-      return <div className="space-y-2">{blanks}</div>;
+      return <div className="space-y-3">{blanks}</div>;
     }
 
     return (
-      <p className="whitespace-pre-wrap">{question.content}</p>
+      <p className="whitespace-pre-wrap leading-7">{question.content}</p>
     );
   };
 
@@ -197,6 +270,9 @@ export const QuestionCard = ({
               {hasSubmitted && isCorrectOption && (
                 <span className="tag-success">正确答案</span>
               )}
+              {hasSubmitted && isSelected && !isCorrectOption && (
+                <span className="tag-danger">错选</span>
+              )}
             </button>
           );
         })}
@@ -204,32 +280,149 @@ export const QuestionCard = ({
     );
   };
 
+  const renderKeywordFeedback = () => {
+    if (!feedback || question.type !== 'materialWrite') return null;
+    if (!feedback.matchedKeywords && !feedback.missingKeywords) return null;
+    
+    const ratio = feedback.maxScore > 0 ? feedback.score / feedback.maxScore : 0;
+    
+    return (
+      <div className="mt-4 p-4 rounded-lg bg-gradient-to-br from-slate-50 to-white border border-slate-200">
+        <div className="flex items-center gap-2 mb-3">
+          <Lightbulb className="w-4 h-4 text-accent-500" />
+          <h4 className="font-semibold text-sm text-slate-800">关键词匹配分析</h4>
+          <span className={cn(
+            'text-xs px-2 py-0.5 rounded-full font-medium ml-auto',
+            ratio >= 0.8 && 'bg-success-100 text-success-700',
+            ratio >= 0.5 && ratio < 0.8 && 'bg-accent-100 text-accent-700',
+            ratio < 0.5 && 'bg-danger-100 text-danger-700'
+          )}>
+            覆盖率 {feedback.score}/{feedback.maxScore}
+          </span>
+        </div>
+        
+        {feedback.matchedKeywords && feedback.matchedKeywords.length > 0 && (
+          <div className="mb-2">
+            <p className="text-xs text-success-700 mb-1 font-medium">
+              <CheckCircle2 className="w-3 h-3 inline mr-1" />
+              已命中要素：
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {feedback.matchedKeywords.slice(0, 8).map((kw, i) => (
+                <span key={i} className="text-xs px-2 py-1 rounded bg-success-100 text-success-700 border border-success-200">
+                  {kw}
+                </span>
+              ))}
+              {feedback.matchedKeywords.length > 8 && (
+                <span className="text-xs px-2 py-1 rounded bg-success-50 text-success-600">
+                  +{feedback.matchedKeywords.length - 8}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        
+        {feedback.missingKeywords && feedback.missingKeywords.length > 0 && (
+          <div>
+            <p className="text-xs text-danger-700 mb-1 font-medium">
+              <XCircle className="w-3 h-3 inline mr-1" />
+              待补充要素：
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {feedback.missingKeywords.slice(0, 8).map((kw, i) => (
+                <span key={i} className="text-xs px-2 py-1 rounded bg-danger-50 text-danger-700 border border-dashed border-danger-300">
+                  {kw}
+                </span>
+              ))}
+              {feedback.missingKeywords.length > 8 && (
+                <span className="text-xs px-2 py-1 rounded bg-danger-50 text-danger-600">
+                  +{feedback.missingKeywords.length - 8}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderTextarea = () => {
     if (question.type !== 'materialWrite') return null;
+    
+    const subTypeLabel = question.subType === 'materialReduction' 
+      ? '材料减免情形编写'
+      : question.subType === 'materialList'
+        ? '申请材料清单编写'
+        : question.subType === 'informCommitment'
+          ? '告知承诺条款编写'
+          : '材料编写';
 
     return (
       <div className="mt-4">
+        <div className="mb-2 flex items-center gap-2">
+          <span className="tag-accent">{subTypeLabel}</span>
+          {question.typeName && question.typeName !== subTypeLabel && (
+            <span className="tag-primary text-xs">{question.typeName}</span>
+          )}
+        </div>
         <textarea
           value={typeof localAnswer === 'string' ? localAnswer : ''}
           onChange={(e) => handleTextarea(e.target.value)}
           disabled={isReadonly || hasSubmitted}
-          placeholder="请在此输入你的答案..."
+          placeholder="请根据题干要求，在此编写规范的要素内容...&#10;&#10;建议结构：&#10;• 适用对象/情形&#10;• 核心要素清单&#10;• 特殊说明/例外情形"
           className={cn(
-            'textarea min-h-[150px]',
+            'textarea min-h-[180px] leading-relaxed',
             hasSubmitted && feedback && !feedback.isCorrect && 'border-danger-300 focus:ring-danger-500',
             hasSubmitted && feedback && feedback.isCorrect && 'border-success-300 focus:ring-success-500'
           )}
         />
-        <p className="text-xs text-slate-500 mt-2">
-          <HelpCircle className="w-3 h-3 inline mr-1" />
-          提示：材料减免情形需要明确适用对象、减免材料和核验方式
+        <p className="text-xs text-slate-500 mt-2 flex items-start gap-1">
+          <HelpCircle className="w-3 h-3 inline mt-0.5 shrink-0" />
+          <span>
+            {question.subType === 'materialReduction' 
+              ? '提示：材料减免情形需要明确【适用对象】、【减免的具体材料】、【替代核验方式】三大要素。'
+              : question.subType === 'informCommitment'
+                ? '提示：告知承诺需要明确【承诺内容】、【不实承诺责任】、【核查方式】三大要素。'
+                : '提示：请包含事项名称、材料名称、份数、形式要求、适用情形等关键要素。'
+            }
+          </span>
+        </p>
+      </div>
+    );
+  };
+
+  const renderFeedbackText = () => {
+    if (!feedback || !feedback.feedback) return null;
+    const ratio = feedback.maxScore > 0 ? feedback.score / feedback.maxScore : (feedback.isCorrect ? 1 : 0);
+    
+    return (
+      <div className={cn(
+        'mt-4 p-3 rounded-lg border flex items-start gap-2',
+        ratio >= 0.8 && 'bg-success-50 border-success-200',
+        ratio >= 0.5 && ratio < 0.8 && 'bg-accent-50 border-accent-200',
+        ratio < 0.5 && 'bg-danger-50 border-danger-200'
+      )}>
+        {ratio >= 0.8 ? (
+          <CheckCircle2 className="w-5 h-5 text-success-600 shrink-0 mt-0.5" />
+        ) : ratio >= 0.5 ? (
+          <AlertCircle className="w-5 h-5 text-accent-600 shrink-0 mt-0.5" />
+        ) : (
+          <XCircle className="w-5 h-5 text-danger-600 shrink-0 mt-0.5" />
+        )}
+        <p className={cn(
+          'text-sm font-medium',
+          ratio >= 0.8 && 'text-success-800',
+          ratio >= 0.5 && ratio < 0.8 && 'text-accent-800',
+          ratio < 0.5 && 'text-danger-800'
+        )}>
+          {feedback.feedback}
         </p>
       </div>
     );
   };
 
   return (
-    <div className="card p-6">
+    <div className="card p-6 animate-fade-in-up">
       <div className="flex items-start justify-between mb-4">
         <div className="flex items-center gap-2 flex-wrap">
           {questionNumber !== undefined && (
@@ -240,6 +433,14 @@ export const QuestionCard = ({
           <span className={`tag ${getDifficultyColor(question.difficulty)}`}>
             {getDifficultyLabel(question.difficulty)}
           </span>
+          {hasSubmitted && (
+            <span className={cn(
+              'tag',
+              feedback?.isCorrect ? 'tag-success' : 'tag-danger'
+            )}>
+              {feedback?.isCorrect ? '已判定正确' : '已判定错误'}
+            </span>
+          )}
         </div>
         
         <button
@@ -261,30 +462,58 @@ export const QuestionCard = ({
       {question.options && renderOptions()}
       {question.type === 'materialWrite' && renderTextarea()}
 
+      {showFeedback && hasSubmitted && feedback?.score !== undefined && feedback.maxScore > 1 && (
+        <div className="mt-4 flex items-center gap-2 p-2 bg-slate-50 rounded-lg">
+          <span className="text-xs text-slate-500">得分：</span>
+          <span className={cn(
+            'font-bold',
+            feedback.score >= feedback.maxScore * 0.8 ? 'text-success-600' : 
+            feedback.score >= feedback.maxScore * 0.5 ? 'text-accent-600' : 'text-danger-600'
+          )}>
+            {feedback.score}/{feedback.maxScore}
+          </span>
+          <div className="flex-1 mx-2 h-2 bg-slate-200 rounded-full overflow-hidden">
+            <div 
+              className={cn(
+                'h-full rounded-full transition-all duration-500',
+                feedback.score >= feedback.maxScore * 0.8 ? 'bg-success-500' : 
+                feedback.score >= feedback.maxScore * 0.5 ? 'bg-accent-500' : 'bg-danger-500'
+              )}
+              style={{ width: `${feedback.maxScore > 0 ? (feedback.score / feedback.maxScore) * 100 : 0}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {showFeedback && hasSubmitted && (
+        <>
+          {renderFeedbackText()}
+          {renderKeywordFeedback()}
+          <AnswerFeedback
+            question={question}
+            isCorrect={!!feedback?.isCorrect}
+            correctAnswer={feedback?.correctAnswer || question.correctAnswer}
+            userAnswer={Array.isArray(localAnswer) ? localAnswer : localAnswer}
+          />
+        </>
+      )}
+
       {!isReadonly && !hasSubmitted && (
         <div className="mt-6 flex justify-end">
           <button
             onClick={handleSubmit}
-            className="btn-primary"
+            className="btn-primary flex items-center gap-2"
           >
-            提交答案
+            <CheckCircle2 className="w-4 h-4" />
+            提交判定
           </button>
         </div>
-      )}
-
-      {showFeedback && hasSubmitted && feedback && (
-        <AnswerFeedback
-          question={question}
-          isCorrect={feedback.isCorrect}
-          correctAnswer={feedback.correctAnswer}
-          userAnswer={Array.isArray(localAnswer) ? localAnswer : localAnswer}
-        />
       )}
 
       {isReadonly && userAnswer && (
         <div className="mt-4 p-4 bg-slate-50 rounded-lg">
           <p className="text-sm font-medium text-slate-700 mb-1">你的答案：</p>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-slate-600 whitespace-pre-wrap">
             {Array.isArray(userAnswer) ? userAnswer.join('、') : userAnswer}
           </p>
         </div>
