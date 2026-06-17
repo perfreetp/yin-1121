@@ -151,6 +151,36 @@ export interface PracticeState {
   questionStartTime: number;
 }
 
+export interface ReviewPlanTask {
+  day: number;
+  category: KnowledgeCategory;
+  categoryName: string;
+  knowledgeId: string;
+  knowledgeTitle: string;
+  wrongQuestionIds: string[];
+  isCompleted: boolean;
+}
+
+export interface ReviewPlan {
+  id: string;
+  createdAt: string;
+  tasks: ReviewPlanTask[];
+  totalDays: number;
+  completedDays: number;
+}
+
+export interface ClassStudent {
+  id: string;
+  name: string;
+  avatar: string;
+  totalQuestions: number;
+  correctCount: number;
+  accuracy: number;
+  levelsPassed: number;
+  totalLevels: number;
+  weakCategories: { categoryName: string; accuracy: number }[];
+}
+
 export interface CategoryFilter {
   category: KnowledgeCategory | 'all';
   itemType: ItemType | 'all';

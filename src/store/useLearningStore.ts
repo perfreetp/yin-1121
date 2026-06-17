@@ -8,7 +8,10 @@ import type {
   LevelProgress,
   UserProfile,
   Question,
-  MistakeType
+  MistakeType,
+  ReviewPlan,
+  ReviewPlanTask,
+  ClassStudent
 } from '@/types';
 import { MistakeTypeNames } from '@/types';
 import { questionList } from '@/data/questions';
@@ -23,6 +26,7 @@ interface LearningState {
   favorites: Favorite[];
   levelProgress: LevelProgress[];
   sessionTrackedRecords: string[];
+  reviewPlans: ReviewPlan[];
   
   markAsLearned: (id: string) => void;
   addAnswerRecord: (record: Omit<UserAnswer, 'id' | 'answerTime'> & { sessionId?: string }) => boolean;
@@ -32,7 +36,10 @@ interface LearningState {
   toggleFavorite: (target: Omit<Favorite, 'id' | 'createdAt'>) => void;
   removeFavorite: (id: string) => void;
   updateLevelProgress: (data: Partial<LevelProgress> & { levelId: number }) => void;
+  createReviewPlan: (tasks: Omit<ReviewPlanTask, 'isCompleted'>[]) => string;
+  completeReviewTask: (planId: string, day: number, category: string) => void;
   getStats: () => LearningStats;
+  getReviewPlanProgress: () => { totalDays: number; completedDays: number; plans: ReviewPlan[] };
   resetAllData: () => void;
 }
 
@@ -53,6 +60,7 @@ export const useLearningStore = create<LearningState>()(
       favorites: [],
       levelProgress: [],
       sessionTrackedRecords: [],
+      reviewPlans: [],
       
       markAsLearned: (id: string) => {
         set(state => {
@@ -205,6 +213,50 @@ export const useLearningStore = create<LearningState>()(
         });
       },
       
+      createReviewPlan: (tasks) => {
+        const planId = generateId();
+        const planTasks: ReviewPlanTask[] = tasks.map(t => ({
+          ...t,
+          isCompleted: false,
+        }));
+        const plan: ReviewPlan = {
+          id: planId,
+          createdAt: new Date().toISOString(),
+          tasks: planTasks,
+          totalDays: new Set(planTasks.map(t => t.day)).size,
+          completedDays: 0,
+        };
+        set(state => ({
+          reviewPlans: [...state.reviewPlans, plan],
+        }));
+        return planId;
+      },
+      
+      completeReviewTask: (planId, day, category) => {
+        set(state => ({
+          reviewPlans: state.reviewPlans.map(plan => {
+            if (plan.id !== planId) return plan;
+            const updatedTasks = plan.tasks.map(t => 
+              t.day === day && t.category === category 
+                ? { ...t, isCompleted: true }
+                : t
+            );
+            const completedDays = new Set(
+              updatedTasks.filter(t => t.isCompleted).map(t => t.day)
+            ).size;
+            return { ...plan, tasks: updatedTasks, completedDays };
+          }),
+        }));
+      },
+      
+      getReviewPlanProgress: () => {
+        const state = get();
+        const plans = state.reviewPlans;
+        const totalDays = plans.reduce((s, p) => s + p.totalDays, 0);
+        const completedDays = plans.reduce((s, p) => s + p.completedDays, 0);
+        return { totalDays, completedDays, plans };
+      },
+      
       getStats: () => {
         const state = get();
         return calculateLearningStats(
@@ -222,6 +274,7 @@ export const useLearningStore = create<LearningState>()(
           mistakeRecords: [],
           favorites: [],
           levelProgress: [],
+          reviewPlans: [],
         });
       },
     }),

@@ -163,6 +163,31 @@ ${categoryGroups.map(g => {
   return `${g.categoryName.padEnd(8)}: ${g.correctCount}/${g.totalCount} (${acc}%)`;
 }).join('\n')}
 
+------------ 逐题判定明细 ------------
+${questionResults.map(r => {
+  const isMaterial = !!(r.matchedKeywords?.length || r.missingKeywords?.length);
+  let verdict;
+  if (!r.hasAnswer) {
+    verdict = '⚪未作答';
+  } else if (isMaterial) {
+    verdict = r.isCorrect ? '✅通过' : '❌未通过';
+  } else {
+    verdict = r.isCorrect ? '✅正确' : '❌错误';
+  }
+  const coverage = isMaterial && r.hasAnswer && r.maxScore > 0 ? `(${Math.round((r.score / r.maxScore) * 100)}%)` : '';
+  let line = `第${r.index + 1}题 [${r.question.typeName}] 判定:${verdict}${coverage} 得分:${r.score}/${r.maxScore}`;
+  if (isMaterial) {
+    const matched = r.matchedKeywords?.length ? r.matchedKeywords.join(',') : '无';
+    const missing = r.missingKeywords?.length ? r.missingKeywords.join(',') : '无';
+    line += `\n  命中: ${matched}  缺失: ${missing}`;
+  } else {
+    const userAns = Array.isArray(r.userAnswer) ? r.userAnswer.join('、') : (r.userAnswer || '未作答');
+    const correctAns = Array.isArray(r.question.correctAnswer) ? r.question.correctAnswer.join('、') : r.question.correctAnswer;
+    line += `\n  作答: ${userAns}  标准答案: ${correctAns}`;
+  }
+  return line;
+}).join('\n')}
+
 ------------ 学习建议 ------------
 ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
 

@@ -14,7 +14,12 @@ import {
   RotateCcw,
   AlertTriangle,
   ChevronRight,
-  FileText
+  FileText,
+  Users,
+  ClipboardList,
+  CheckCircle2,
+  XCircle,
+  BarChart3
 } from 'lucide-react';
 import { PageLayout } from '@/components/layout/PageLayout';
 import { RadarChart } from '@/components/business/RadarChart';
@@ -22,21 +27,25 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { useLearningStore } from '@/store/useLearningStore';
 import { levelList } from '@/data/levels';
 import { knowledgeList } from '@/data/knowledge';
+import { KnowledgeCategoryNames } from '@/types';
+import type { ClassStudent, LearningStats, LevelProgress } from '@/types';
 import { cn } from '@/lib/utils';
 import { formatDate } from '@/utils/format';
 
 const tabs = [
   { id: 'overview', label: '学习总览', icon: TrendingUp },
+  { id: 'classroom', label: '班级视图', icon: Users },
   { id: 'favorites', label: '我的收藏', icon: Star },
 ];
 
 export const ProfilePage = () => {
   const navigate = useNavigate();
-  const { user, getStats, favorites, learnedIds, levelProgress, resetAllData } = useLearningStore();
-  const [activeTab, setActiveTab] = useState<'overview' | 'favorites'>('overview');
+  const { user, getStats, favorites, learnedIds, levelProgress, resetAllData, getReviewPlanProgress } = useLearningStore();
+  const [activeTab, setActiveTab] = useState<'overview' | 'classroom' | 'favorites'>('overview');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const stats = getStats();
+  const reviewPlanProgress = getReviewPlanProgress();
 
   const levelStats = useMemo(() => {
     return levelList.map(level => {
@@ -366,6 +375,85 @@ export const ProfilePage = () => {
                 </div>
               </div>
             )}
+
+            {/* Review Plan Progress */}
+            {reviewPlanProgress.plans.length > 0 && (
+              <div className="card p-6 mt-6">
+                <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                  <ClipboardList className="w-5 h-5 text-accent-500" />
+                  复习计划进度
+                </h2>
+                <div className="space-y-4">
+                  {reviewPlanProgress.plans.map(plan => (
+                    <div key={plan.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">
+                            创建于 {formatDate(plan.createdAt)}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            共 {plan.totalDays} 天任务，已完成 {plan.completedDays} 天
+                          </p>
+                        </div>
+                        <span className={cn(
+                          'text-lg font-bold',
+                          plan.completedDays >= plan.totalDays ? 'text-success-600' :
+                          plan.completedDays > 0 ? 'text-accent-600' : 'text-slate-400'
+                        )}>
+                          {plan.totalDays > 0 ? Math.round((plan.completedDays / plan.totalDays) * 100) : 0}%
+                        </span>
+                      </div>
+                      <div className="h-2 bg-slate-200 rounded-full overflow-hidden mb-3">
+                        <div 
+                          className={cn(
+                            'h-full rounded-full transition-all',
+                            plan.completedDays >= plan.totalDays ? 'bg-success-500' : 'bg-accent-500'
+                          )}
+                          style={{ width: `${plan.totalDays > 0 ? (plan.completedDays / plan.totalDays) * 100 : 0}%` }}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        {Array.from(new Set(plan.tasks.map(t => t.day))).sort().map(day => {
+                          const dayTasks = plan.tasks.filter(t => t.day === day);
+                          const allCompleted = dayTasks.every(t => t.isCompleted);
+                          return (
+                            <div key={day} className={cn(
+                              'p-2 rounded-lg flex items-center justify-between',
+                              allCompleted ? 'bg-success-50 border border-success-100' : 'bg-white border border-slate-100'
+                            )}>
+                              <div className="flex items-center gap-2">
+                                {allCompleted ? (
+                                  <CheckCircle2 className="w-4 h-4 text-success-500" />
+                                ) : (
+                                  <div className="w-4 h-4 rounded-full border-2 border-slate-300" />
+                                )}
+                                <span className="text-xs font-medium text-slate-700">第 {day} 天</span>
+                                <span className="text-xs text-slate-500">
+                                  {dayTasks.map(t => t.categoryName).join('、')}
+                                </span>
+                              </div>
+                              <span className={cn(
+                                'text-xs',
+                                allCompleted ? 'text-success-600' : 'text-slate-400'
+                              )}>
+                                {allCompleted ? '已完成' : '待完成'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Classroom Tab */}
+        {activeTab === 'classroom' && (
+          <div className="animate-fade-in-up">
+            <ClassroomView currentUser={user} currentStats={stats} currentLevelProgress={levelProgress} />
           </div>
         )}
 
@@ -467,5 +555,290 @@ export const ProfilePage = () => {
         )}
       </div>
     </PageLayout>
+  );
+};
+
+const mockStudents: ClassStudent[] = [
+  {
+    id: 's1', name: '张明远', avatar: '👨‍💼', totalQuestions: 156, correctCount: 132, accuracy: 84.6,
+    levelsPassed: 4, totalLevels: 5,
+    weakCategories: [{ categoryName: '法定依据', accuracy: 62 }, { categoryName: '承诺时限', accuracy: 68 }],
+  },
+  {
+    id: 's2', name: '李晓红', avatar: '👩‍💼', totalQuestions: 203, correctCount: 178, accuracy: 87.7,
+    levelsPassed: 5, totalLevels: 5,
+    weakCategories: [{ categoryName: '材料减免', accuracy: 71 }],
+  },
+  {
+    id: 's3', name: '王建国', avatar: '👨‍🔧', totalQuestions: 89, correctCount: 58, accuracy: 65.2,
+    levelsPassed: 2, totalLevels: 5,
+    weakCategories: [{ categoryName: '受理条件', accuracy: 48 }, { categoryName: '申请材料', accuracy: 55 }, { categoryName: '法定依据', accuracy: 52 }],
+  },
+  {
+    id: 's4', name: '赵文静', avatar: '👩‍💻', totalQuestions: 134, correctCount: 108, accuracy: 80.6,
+    levelsPassed: 3, totalLevels: 5,
+    weakCategories: [{ categoryName: '常见错误', accuracy: 58 }, { categoryName: '承诺时限', accuracy: 65 }],
+  },
+  {
+    id: 's5', name: '陈思远', avatar: '🧑‍🏫', totalQuestions: 178, correctCount: 152, accuracy: 85.4,
+    levelsPassed: 4, totalLevels: 5,
+    weakCategories: [{ categoryName: '申请材料', accuracy: 69 }],
+  },
+  {
+    id: 's6', name: '刘雅琴', avatar: '👩‍🎓', totalQuestions: 112, correctCount: 72, accuracy: 64.3,
+    levelsPassed: 2, totalLevels: 5,
+    weakCategories: [{ categoryName: '受理条件', accuracy: 45 }, { categoryName: '法定依据', accuracy: 50 }, { categoryName: '材料减免', accuracy: 55 }],
+  },
+  {
+    id: 's7', name: '孙志强', avatar: '👨‍🎓', totalQuestions: 167, correctCount: 142, accuracy: 85.0,
+    levelsPassed: 4, totalLevels: 5,
+    weakCategories: [{ categoryName: '承诺时限', accuracy: 66 }],
+  },
+  {
+    id: 's8', name: '周美华', avatar: '👩‍🔧', totalQuestions: 95, correctCount: 65, accuracy: 68.4,
+    levelsPassed: 2, totalLevels: 5,
+    weakCategories: [{ categoryName: '申请材料', accuracy: 52 }, { categoryName: '常见错误', accuracy: 48 }],
+  },
+];
+
+interface ClassroomViewProps {
+  currentUser: { name: string; avatar: string };
+  currentStats: LearningStats;
+  currentLevelProgress: LevelProgress[];
+}
+
+const ClassroomView = ({ currentUser, currentStats, currentLevelProgress }: ClassroomViewProps) => {
+  const allStudents = useMemo(() => {
+    const me: ClassStudent = {
+      id: 'me',
+      name: currentUser.name,
+      avatar: currentUser.avatar,
+      totalQuestions: currentStats.totalQuestions,
+      correctCount: currentStats.correctCount,
+      accuracy: Math.round(currentStats.accuracy * 10) / 10,
+      levelsPassed: currentLevelProgress.filter(p => p.isPassed).length,
+      totalLevels: levelList.length,
+      weakCategories: currentStats.categoryAccuracy
+        .filter(c => c.accuracy < 70)
+        .map(c => ({ categoryName: c.categoryName, accuracy: c.accuracy }))
+        .sort((a, b) => a.accuracy - b.accuracy)
+        .slice(0, 3),
+    };
+    return [me, ...mockStudents].sort((a, b) => b.accuracy - a.accuracy);
+  }, [currentUser, currentStats, currentLevelProgress]);
+
+  const classStats = useMemo(() => {
+    const total = allStudents.length;
+    const passedCount = allStudents.filter(s => s.levelsPassed >= 3).length;
+    const avgAccuracy = total > 0 
+      ? Math.round(allStudents.reduce((s, st) => s + st.accuracy, 0) / total * 10) / 10 
+      : 0;
+    const avgQuestions = total > 0
+      ? Math.round(allStudents.reduce((s, st) => s + st.totalQuestions, 0) / total)
+      : 0;
+    return { total, passedCount, avgAccuracy, avgQuestions };
+  }, [allStudents]);
+
+  const weakCategoryRanking = useMemo(() => {
+    const categoryMap = new Map<string, { categoryName: string; totalStudents: number; weakStudents: number }>();
+    allStudents.forEach(s => {
+      s.weakCategories.forEach(wc => {
+        if (!categoryMap.has(wc.categoryName)) {
+          categoryMap.set(wc.categoryName, { categoryName: wc.categoryName, totalStudents: 0, weakStudents: 0 });
+        }
+        const entry = categoryMap.get(wc.categoryName)!;
+        entry.totalStudents++;
+        entry.weakStudents++;
+      });
+    });
+    allStudents.forEach(s => {
+      const allCats = new Set(s.weakCategories.map(wc => wc.categoryName));
+      allCats.forEach(cat => {
+        const entry = categoryMap.get(cat);
+        if (entry) entry.totalStudents = allStudents.length;
+      });
+    });
+    return Array.from(categoryMap.values()).sort((a, b) => b.weakStudents - a.weakStudents);
+  }, [allStudents]);
+
+  const accuracyRanges = useMemo(() => {
+    const ranges = [
+      { label: '优秀(≥80%)', min: 80, max: 101, count: 0, color: 'bg-success-500' },
+      { label: '良好(60-79%)', min: 60, max: 80, count: 0, color: 'bg-accent-500' },
+      { label: '需加强(<60%)', min: 0, max: 60, count: 0, color: 'bg-danger-500' },
+    ];
+    allStudents.forEach(s => {
+      if (s.accuracy >= 80) ranges[0].count++;
+      else if (s.accuracy >= 60) ranges[1].count++;
+      else ranges[2].count++;
+    });
+    return ranges;
+  }, [allStudents]);
+
+  return (
+    <div>
+      {/* Class Overview Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Users className="w-5 h-5 text-primary-500" />
+            <span className="text-sm text-slate-500">班级人数</span>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{classStats.total}</p>
+          <p className="text-xs text-slate-500">已通过 {classStats.passedCount} 人</p>
+        </div>
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Target className="w-5 h-5 text-success-500" />
+            <span className="text-sm text-slate-500">平均正确率</span>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">{classStats.avgAccuracy}%</p>
+          <p className="text-xs text-slate-500">人均答题 {classStats.avgQuestions} 题</p>
+        </div>
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Trophy className="w-5 h-5 text-accent-500" />
+            <span className="text-sm text-slate-500">通过率</span>
+          </div>
+          <p className="text-2xl font-bold text-slate-900">
+            {classStats.total > 0 ? Math.round((classStats.passedCount / classStats.total) * 100) : 0}%
+          </p>
+          <p className="text-xs text-slate-500">{classStats.passedCount}/{classStats.total} 人</p>
+        </div>
+        <div className="card p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <BarChart3 className="w-5 h-5 text-danger-500" />
+            <span className="text-sm text-slate-500">成绩分布</span>
+          </div>
+          <div className="space-y-1">
+            {accuracyRanges.map(r => (
+              <div key={r.label} className="flex items-center gap-2">
+                <div className={cn('w-2 h-2 rounded-full', r.color)} />
+                <span className="text-xs text-slate-600">{r.count}人 {r.label}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Weak Category Ranking */}
+      <div className="card p-6 mb-6">
+        <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+          <AlertTriangle className="w-5 h-5 text-danger-500" />
+          薄弱类别排行
+        </h2>
+        {weakCategoryRanking.length > 0 ? (
+          <div className="space-y-3">
+            {weakCategoryRanking.slice(0, 5).map((wc, i) => (
+              <div key={wc.categoryName} className="flex items-center gap-3">
+                <span className={cn(
+                  'w-7 h-7 rounded-full flex items-center justify-center text-sm font-bold shrink-0',
+                  i === 0 && 'bg-danger-500 text-white',
+                  i === 1 && 'bg-accent-500 text-white',
+                  i >= 2 && 'bg-slate-200 text-slate-600'
+                )}>
+                  {i + 1}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-sm font-medium text-slate-800">{wc.categoryName}</span>
+                    <span className="text-xs text-danger-600 font-medium">
+                      {wc.weakStudents}/{wc.totalStudents} 人薄弱
+                    </span>
+                  </div>
+                  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-danger-400 rounded-full"
+                      style={{ width: `${wc.totalStudents > 0 ? (wc.weakStudents / wc.totalStudents) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">暂无薄弱类别数据</p>
+        )}
+      </div>
+
+      {/* Student Rankings Table */}
+      <div className="card p-6">
+        <h2 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+          <Award className="w-5 h-5 text-accent-500" />
+          学员成绩一览
+        </h2>
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-slate-200">
+                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">排名</th>
+                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">学员</th>
+                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">答题数</th>
+                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">正确率</th>
+                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">通过关卡</th>
+                <th className="text-left py-3 px-3 text-sm font-medium text-slate-500">薄弱类别</th>
+              </tr>
+            </thead>
+            <tbody>
+              {allStudents.map((student, idx) => (
+                <tr key={student.id} className={cn(
+                  'border-b border-slate-100',
+                  student.id === 'me' && 'bg-primary-50/50'
+                )}>
+                  <td className="py-3 px-3">
+                    <span className={cn(
+                      'w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold',
+                      idx === 0 && 'bg-amber-100 text-amber-700',
+                      idx === 1 && 'bg-slate-200 text-slate-600',
+                      idx === 2 && 'bg-amber-50 text-amber-600',
+                      idx > 2 && 'text-slate-400'
+                    )}>
+                      {idx + 1}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{student.avatar}</span>
+                      <span className="text-sm font-medium text-slate-800">{student.name}</span>
+                      {student.id === 'me' && (
+                        <span className="tag-primary text-xs">我</span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="py-3 px-3 text-sm text-slate-700">{student.totalQuestions}</td>
+                  <td className="py-3 px-3">
+                    <span className={cn(
+                      'text-sm font-bold',
+                      student.accuracy >= 80 ? 'text-success-600' :
+                      student.accuracy >= 60 ? 'text-accent-600' : 'text-danger-600'
+                    )}>
+                      {student.accuracy}%
+                    </span>
+                  </td>
+                  <td className="py-3 px-3">
+                    <span className="text-sm text-slate-700">
+                      {student.levelsPassed}/{student.totalLevels}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3">
+                    <div className="flex flex-wrap gap-1">
+                      {student.weakCategories.length > 0 ? (
+                        student.weakCategories.slice(0, 2).map(wc => (
+                          <span key={wc.categoryName} className="tag-danger text-xs">
+                            {wc.categoryName} {wc.accuracy}%
+                          </span>
+                        ))
+                      ) : (
+                        <span className="tag-success text-xs">均衡</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   );
 };

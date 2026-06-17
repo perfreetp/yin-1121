@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   ArrowLeft, 
@@ -13,13 +13,17 @@ import {
   RotateCcw,
   Target,
   Lightbulb,
-  Eye
+  Eye,
+  Calendar,
+  ClipboardList,
+  X
 } from 'lucide-react';
 import { PageLayout } from '@/components/layout/PageLayout';
 import { EmptyState } from '@/components/common/EmptyState';
 import { usePracticeStore } from '@/store/usePracticeStore';
 import { useLearningStore } from '@/store/useLearningStore';
 import { checkAnswer, groupQuestionsByCategory, generateWeaknessSuggestions } from '@/utils/calculation';
+import type { KnowledgeCategory, ReviewPlanTask } from '@/types';
 import { knowledgeList } from '@/data/knowledge';
 import { cn } from '@/lib/utils';
 
@@ -34,10 +38,21 @@ export const PracticeResult = () => {
     goToQuestion,
     reset
   } = usePracticeStore();
-  const { getStats } = useLearningStore();
+  const { getStats, createReviewPlan } = useLearningStore();
   
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>({});
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem('practice_result_selectedCategory');
+    } catch { return null; }
+  });
+  const [expandedQuestions, setExpandedQuestions] = useState<Record<string, boolean>>(() => {
+    try {
+      const stored = sessionStorage.getItem('practice_result_expandedQuestions');
+      return stored ? JSON.parse(stored) : {};
+    } catch { return {}; }
+  });
+  const [showPlanModal, setShowPlanModal] = useState(false);
+  const [generatedPlan, setGeneratedPlan] = useState<Omit<ReviewPlanTask, 'isCompleted'>[]>([]);
 
   const categoryGroups = useMemo(() => {
     if (questions.length === 0) return [];
@@ -56,6 +71,22 @@ export const PracticeResult = () => {
   const suggestions = useMemo(() => {
     return generateWeaknessSuggestions(categoryGroups);
   }, [categoryGroups]);
+
+  useEffect(() => {
+    try {
+      if (selectedCategory === null) {
+        sessionStorage.removeItem('practice_result_selectedCategory');
+      } else {
+        sessionStorage.setItem('practice_result_selectedCategory', selectedCategory);
+      }
+    } catch {}
+  }, [selectedCategory]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('practice_result_expandedQuestions', JSON.stringify(expandedQuestions));
+    } catch {}
+  }, [expandedQuestions]);
 
   const overallStats = useMemo(() => {
     const submitted = questions.filter(q => submittedQuestions[q.id]);
@@ -86,6 +117,58 @@ export const PracticeResult = () => {
       ...prev,
       [qid]: !prev[qid]
     }));
+  };
+
+  const handleGeneratePlan = () => {
+    const weakGroups = categoryGroups
+      .filter(g => g.wrongQuestions.length > 0)
+      .map(g => ({
+        category: g.category,
+        categoryName: g.categoryName,
+        accuracy: g.totalCount > 0 ? g.correctCount / g.totalCount : 0,
+        knowledgeGroups: g.knowledgeGroups.filter(kg => kg.wrongQuestions.length > 0),
+      }))
+      .sort((a, b) => a.accuracy - b.accuracy);
+
+    if (weakGroups.length === 0) return;
+
+    const tasks: Omit<ReviewPlanTask, 'isCompleted'>[] = [];
+    let day = 1;
+    let dailyCount = 0;
+
+    for (const group of weakGroups) {
+      for (const kg of group.knowledgeGroups) {
+        tasks.push({
+          day,
+          category: group.category as KnowledgeCategory,
+          categoryName: group.categoryName,
+          knowledgeId: kg.knowledgeId,
+          knowledgeTitle: kg.knowledgeTitle,
+          wrongQuestionIds: kg.wrongQuestions.map(q => q.id),
+        });
+        dailyCount++;
+        if (dailyCount >= 2) {
+          day++;
+          dailyCount = 0;
+        }
+      }
+      if (dailyCount > 0) {
+        day++;
+        dailyCount = 0;
+      }
+    }
+
+    const totalDays = Math.min(Math.max(tasks[tasks.length - 1]?.day || 1, 3), 5);
+    setGeneratedPlan(tasks);
+    setShowPlanModal(true);
+  };
+
+  const handleSavePlan = () => {
+    if (generatedPlan.length === 0) return;
+    createReviewPlan(generatedPlan);
+    setShowPlanModal(false);
+    setGeneratedPlan([]);
+    alert('复习计划已保存！可在学习中心查看。');
   };
 
   const goToKnowledge = (knowledgeId: string) => {
@@ -197,6 +280,92 @@ export const PracticeResult = () => {
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {/* Generate Review Plan Button */}
+        {wrongQuestions.length > 0 && (
+          <div className="mb-6">
+            <button
+              onClick={handleGeneratePlan}
+              className="btn-primary flex items-center gap-2 w-full justify-center py-3 text-base"
+            >
+              <Calendar className="w-5 h-5" />
+              📋 生成复习计划
+            </button>
+          </div>
+        )}
+
+        {/* Review Plan Modal */}
+        {showPlanModal && generatedPlan.length > 0 && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[80vh] flex flex-col animate-fade-in-up">
+              <div className="flex items-center justify-between p-5 border-b border-slate-100">
+                <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                  <ClipboardList className="w-5 h-5 text-primary-500" />
+                  复习计划
+                </h3>
+                <button
+                  onClick={() => { setShowPlanModal(false); setGeneratedPlan([]); }}
+                  className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                >
+                  <X className="w-4 h-4 text-slate-500" />
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto p-5 space-y-4">
+                {(() => {
+                  const days = [...new Set(generatedPlan.map(t => t.day))].sort();
+                  return days.map(day => (
+                    <div key={day} className="border border-slate-200 rounded-xl overflow-hidden">
+                      <div className="bg-gradient-to-r from-primary-500 to-primary-600 text-white px-4 py-2.5 font-semibold text-sm flex items-center gap-2">
+                        <Calendar className="w-4 h-4" />
+                        第 {day} 天
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {generatedPlan.filter(t => t.day === day).map((task, ti) => (
+                          <div key={ti} className="p-3">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <span className="text-xs font-bold text-primary-600 bg-primary-50 px-2 py-0.5 rounded">
+                                {task.categoryName}
+                              </span>
+                              <span className="text-sm font-medium text-slate-800">{task.knowledgeTitle}</span>
+                            </div>
+                            <p className="text-xs text-slate-500 mb-2">
+                              需复习错题 {task.wrongQuestionIds.length} 道
+                            </p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => goToKnowledge(task.knowledgeId)}
+                                className="text-xs px-3 py-1.5 rounded-lg bg-primary-50 text-primary-700 hover:bg-primary-100 transition-colors flex items-center gap-1"
+                              >
+                                <BookOpen className="w-3 h-3" />
+                                去规则课堂
+                              </button>
+                              <button
+                                onClick={() => navigate('/mistakes')}
+                                className="text-xs px-3 py-1.5 rounded-lg bg-danger-50 text-danger-700 hover:bg-danger-100 transition-colors flex items-center gap-1"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                错题再练
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ));
+                })()}
+              </div>
+              <div className="p-5 border-t border-slate-100">
+                <button
+                  onClick={handleSavePlan}
+                  className="btn-primary w-full py-3 flex items-center justify-center gap-2"
+                >
+                  <CheckCircle2 className="w-4 h-4" />
+                  确认并保存计划
+                </button>
+              </div>
+            </div>
           </div>
         )}
 

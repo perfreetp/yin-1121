@@ -267,16 +267,18 @@ export const PracticeSession = () => {
                   各类别掌握情况
                 </h3>
                 <div className="space-y-3">
-                  {categoryGroups.slice(0, 5).map((g) => {
+                  {categoryGroups.filter(g => g.totalCount > 0).slice(0, 5).map((g) => {
                     const accuracy = g.totalCount > 0 
                       ? Math.round((g.correctCount / g.totalCount) * 100) 
                       : 0;
                     return (
-                      <div key={g.knowledgeId} className="p-3 bg-slate-50 rounded-lg">
+                      <div key={g.category} className="p-3 bg-slate-50 rounded-lg">
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-sm font-medium text-slate-800">
                             {g.categoryName}
-                            <span className="text-xs text-slate-500 ml-2">（{g.knowledgeTitle}）</span>
+                            <span className="text-xs text-slate-500 ml-2">
+                              {g.knowledgeGroups.length}个知识点 · {g.correctCount}/{g.totalCount}题
+                            </span>
                           </span>
                           <span className={cn(
                             'text-sm font-bold',
