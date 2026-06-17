@@ -39,9 +39,14 @@ export const QuestionCard = ({
   const storeResult = getSubmissionResult(question.id);
   
   const [localAnswer, setLocalAnswer] = useState<string | string[]>(
-    Array.isArray(question.correctAnswer) ? [] : ''
+    () => {
+      if (userAnswer !== undefined) {
+        return Array.isArray(userAnswer) ? [...userAnswer] : userAnswer;
+      }
+      return Array.isArray(question.correctAnswer) ? [] : '';
+    }
   );
-  const [hasSubmitted, setHasSubmitted] = useState(submittedFromStore);
+  const [hasSubmitted, setHasSubmitted] = useState<boolean>(submittedFromStore);
   const [feedback, setFeedback] = useState<{
     isCorrect: boolean;
     correctAnswer: string | string[];
@@ -51,35 +56,74 @@ export const QuestionCard = ({
     feedback?: string;
     matchedKeywords?: string[];
     missingKeywords?: string[];
-  } | null>(null);
+  } | null>(
+    () => {
+      if (submittedFromStore && storeResult) {
+        return {
+          isCorrect: storeResult.isCorrect,
+          correctAnswer: question.correctAnswer,
+          timeSpent: 0,
+          score: storeResult.score,
+          maxScore: storeResult.maxScore,
+          feedback: storeResult.feedback,
+          matchedKeywords: storeResult.matchedKeywords,
+          missingKeywords: storeResult.missingKeywords,
+        };
+      }
+      return null;
+    }
+  );
 
   useEffect(() => {
     if (userAnswer !== undefined) {
       if (Array.isArray(userAnswer)) {
-        setLocalAnswer([...userAnswer]);
+        setLocalAnswer(prev => {
+          const prevArr = Array.isArray(prev) ? prev : [];
+          if (JSON.stringify(prevArr) !== JSON.stringify(userAnswer)) {
+            return [...userAnswer];
+          }
+          return prevArr;
+        });
       } else {
-        setLocalAnswer(userAnswer);
+        setLocalAnswer(prev => {
+          if (prev !== userAnswer) return userAnswer;
+          return prev;
+        });
       }
     } else {
-      setLocalAnswer(Array.isArray(question.correctAnswer) ? [] : '');
-    }
-  }, [question.id]);
-
-  useEffect(() => {
-    if (submittedFromStore && storeResult && !hasSubmitted) {
-      setHasSubmitted(true);
-      setFeedback({
-        isCorrect: storeResult.isCorrect,
-        correctAnswer: question.correctAnswer,
-        timeSpent: 0,
-        score: storeResult.score,
-        maxScore: storeResult.maxScore,
-        feedback: storeResult.feedback,
-        matchedKeywords: storeResult.matchedKeywords,
-        missingKeywords: storeResult.missingKeywords,
+      const empty = Array.isArray(question.correctAnswer) ? [] : '';
+      setLocalAnswer(prev => {
+        if (JSON.stringify(prev) !== JSON.stringify(empty)) return empty;
+        return prev;
       });
     }
-  }, [submittedFromStore, storeResult, hasSubmitted, question.correctAnswer]);
+  }, [question.id, userAnswer]);
+
+  useEffect(() => {
+    if (submittedFromStore && storeResult) {
+      setHasSubmitted(true);
+      setFeedback(prev => {
+        const needsUpdate = !prev || 
+          prev.isCorrect !== storeResult.isCorrect ||
+          prev.score !== storeResult.score ||
+          prev.maxScore !== storeResult.maxScore ||
+          prev.feedback !== storeResult.feedback;
+        if (needsUpdate) {
+          return {
+            isCorrect: storeResult.isCorrect,
+            correctAnswer: question.correctAnswer,
+            timeSpent: prev?.timeSpent || 0,
+            score: storeResult.score,
+            maxScore: storeResult.maxScore,
+            feedback: storeResult.feedback,
+            matchedKeywords: storeResult.matchedKeywords,
+            missingKeywords: storeResult.missingKeywords,
+          };
+        }
+        return prev;
+      });
+    }
+  }, [submittedFromStore, storeResult, question.correctAnswer]);
 
   const blankIndexes = useMemo(() => {
     if (question.type !== 'fillBlank') return [] as number[];

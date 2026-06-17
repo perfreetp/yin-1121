@@ -217,10 +217,10 @@ export const PracticeResult = () => {
               全部 ({categoryGroups.reduce((s, g) => s + g.totalCount, 0)})
             </button>
             {uniqueCategories.map(cat => {
-              const grp = categoryGroups.filter(g => g.category === cat);
-              const total = grp.reduce((s, g) => s + g.totalCount, 0);
-              const wrong = grp.reduce((s, g) => s + g.wrongQuestions.length, 0);
-              const catName = grp[0]?.categoryName || cat;
+              const grp = categoryGroups.find(g => g.category === cat);
+              const total = grp?.totalCount || 0;
+              const wrong = grp?.wrongQuestions.length || 0;
+              const catName = grp?.categoryName || cat;
               return (
                 <button
                   key={cat}
@@ -245,27 +245,27 @@ export const PracticeResult = () => {
           </div>
         )}
 
-        {/* Wrong Questions by Category */}
+        {/* Wrong Questions by Major Category */}
         <div className="space-y-6">
           {displayGroups.map((group, gi) => {
-            const knowledge = knowledgeList.find(k => k.id === group.knowledgeId);
             const groupAccuracy = group.totalCount > 0 
               ? Math.round((group.correctCount / group.totalCount) * 100)
               : 0;
             
             return (
               <div 
-                key={group.knowledgeId} 
+                key={group.category} 
                 className="card overflow-hidden animate-fade-in-up"
                 style={{ animationDelay: `${0.05 + gi * 0.05}s` }}
               >
+                {/* Major Category Header */}
                 <div className="p-5 bg-gradient-to-r from-slate-50 to-white border-b border-slate-100">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="tag-primary">{group.categoryName}</span>
+                      <div className="flex items-center gap-2 mb-3 flex-wrap">
+                        <span className="tag-primary text-sm px-3 py-1">{group.categoryName}</span>
                         <span className="tag text-xs text-slate-600 bg-slate-100">
-                          知识点：{group.knowledgeTitle}
+                          含 {group.knowledgeGroups.length} 个知识点 · {group.totalCount} 题
                         </span>
                         {group.wrongQuestions.length > 0 && (
                           <span className="tag-danger text-xs">
@@ -276,7 +276,7 @@ export const PracticeResult = () => {
                       <div className="flex items-center gap-4">
                         <div className="flex-1 max-w-md">
                           <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
-                            <span>本类正确率</span>
+                            <span>大类总正确率</span>
                             <span className={cn(
                               'font-bold',
                               groupAccuracy >= 80 ? 'text-success-600' :
@@ -298,115 +298,163 @@ export const PracticeResult = () => {
                         </div>
                       </div>
                     </div>
-                    {knowledge && (
-                      <button
-                        onClick={() => goToKnowledge(group.knowledgeId)}
-                        className="btn-secondary shrink-0 flex items-center gap-1"
-                      >
-                        <BookOpen className="w-4 h-4" />
-                        复习规则
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    )}
+                  </div>
+                  {/* Quick Review Buttons for Each Knowledge Point */}
+                  <div className="mt-4 pt-4 border-t border-slate-200/60">
+                    <p className="text-xs text-slate-500 mb-2">直接进入对应规则课堂复习：</p>
+                    <div className="flex flex-wrap gap-2">
+                      {group.knowledgeGroups.map(kg => {
+                        const kgAccuracy = kg.totalCount > 0 
+                          ? Math.round((kg.correctCount / kg.totalCount) * 100) : 0;
+                        return (
+                          <button
+                            key={kg.knowledgeId}
+                            onClick={() => goToKnowledge(kg.knowledgeId)}
+                            className={cn(
+                              'px-3 py-1.5 rounded-lg text-xs transition-all flex items-center gap-1.5 border',
+                              kgAccuracy >= 80 
+                                ? 'bg-success-50 text-success-700 border-success-200 hover:bg-success-100'
+                                : kgAccuracy >= 60
+                                  ? 'bg-accent-50 text-accent-700 border-accent-200 hover:bg-accent-100'
+                                  : 'bg-danger-50 text-danger-700 border-danger-200 hover:bg-danger-100'
+                            )}
+                          >
+                            <BookOpen className="w-3 h-3" />
+                            {kg.knowledgeTitle}
+                            <span className="opacity-75">
+                              ({kg.correctCount}/{kg.totalCount}·{kgAccuracy}%)
+                            </span>
+                            <ChevronRight className="w-3 h-3 opacity-60" />
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
 
+                {/* Knowledge Subgroups with Mistakes */}
                 {group.wrongQuestions.length > 0 ? (
                   <div className="divide-y divide-slate-100">
-                    {group.wrongQuestions.map((q, qi) => {
-                      const qIndex = questions.findIndex(qq => qq.id === q.id);
-                      const isExpanded = expandedQuestions[q.id];
-                      const userAnswer = userAnswers[q.id] || '';
-                      const result = checkAnswer(q, userAnswer || '');
+                    {group.knowledgeGroups.map(kg => {
+                      if (kg.wrongQuestions.length === 0) return null;
                       
                       return (
-                        <div key={q.id} className="p-4 hover:bg-slate-50/50 transition-colors">
-                          <div 
-                            className="flex items-start gap-3 cursor-pointer"
-                            onClick={() => toggleQuestionExpand(q.id)}
-                          >
-                            <div className="w-8 h-8 rounded-full bg-danger-100 text-danger-600 flex items-center justify-center shrink-0 mt-0.5">
-                              <XCircle className="w-4 h-4" />
+                        <div key={kg.knowledgeId} className="bg-slate-50/40">
+                          <div className="px-5 py-3 bg-white/60 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-bold text-primary-600 bg-primary-50 px-2 py-1 rounded">
+                                {kg.knowledgeTitle}
+                              </span>
+                              <span className="text-xs text-slate-500">
+                                本知识点错 {kg.wrongQuestions.length} 题
+                              </span>
                             </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                <span className="text-xs font-medium text-slate-500">
-                                  第 {qIndex + 1} 题
-                                </span>
-                                <span className="tag-accent text-xs">{q.typeName}</span>
-                                <span className="tag text-xs bg-slate-100 text-slate-600">
-                                  {q.itemTypeName}
-                                </span>
-                              </div>
-                              <p className="text-sm text-slate-800 line-clamp-2 leading-relaxed">
-                                {q.content.replace(/\n/g, ' / ')}
-                              </p>
-                            </div>
-                            <ChevronRight className={cn(
-                              'w-5 h-5 text-slate-400 shrink-0 mt-1 transition-transform',
-                              isExpanded && 'rotate-90'
-                            )} />
+                            <button
+                              onClick={() => goToKnowledge(kg.knowledgeId)}
+                              className="text-xs text-primary-600 hover:text-primary-700 flex items-center gap-0.5 font-medium"
+                            >
+                              <BookOpen className="w-3 h-3" />
+                              复习此知识点
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
                           </div>
-                          
-                          {isExpanded && (
-                            <div className="mt-4 ml-11 space-y-3 animate-fade-in-up">
-                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                <div className="p-3 rounded-lg bg-danger-50 border border-danger-100">
-                                  <p className="text-xs font-medium text-danger-700 mb-1 flex items-center gap-1">
-                                    <XCircle className="w-3 h-3" />
-                                    你的答案
-                                  </p>
-                                  <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">
-                                    {Array.isArray(userAnswer) ? userAnswer.join('、') : (userAnswer || '（未作答）')}
-                                  </p>
-                                </div>
-                                <div className="p-3 rounded-lg bg-success-50 border border-success-100">
-                                  <p className="text-xs font-medium text-success-700 mb-1 flex items-center gap-1">
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    参考答案
-                                  </p>
-                                  <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">
-                                    {Array.isArray(q.correctAnswer) ? q.correctAnswer.join('、') : q.correctAnswer}
-                                  </p>
-                                </div>
-                              </div>
+                          <div className="divide-y divide-slate-100/50">
+                            {kg.wrongQuestions.map((q) => {
+                              const qIndex = questions.findIndex(qq => qq.id === q.id);
+                              const isExpanded = expandedQuestions[q.id];
+                              const userAnswer = userAnswers[q.id] || '';
+                              const result = checkAnswer(q, userAnswer || '');
                               
-                              {result.feedback && (
-                                <div className="p-3 rounded-lg bg-accent-50 border border-accent-100">
-                                  <p className="text-xs font-medium text-accent-700 mb-1 flex items-center gap-1">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    错因提示
-                                  </p>
-                                  <p className="text-sm text-slate-700">{result.feedback}</p>
-                                </div>
-                              )}
-
-                              <div className="flex gap-2 pt-2 flex-wrap">
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    goBackToQuestion(qIndex);
-                                  }}
-                                  className="btn-secondary text-xs flex items-center gap-1"
-                                >
-                                  <Eye className="w-3 h-3" />
-                                  回看原题
-                                </button>
-                                {knowledge && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      goToKnowledge(group.knowledgeId);
-                                    }}
-                                    className="btn-primary text-xs flex items-center gap-1"
+                              return (
+                                <div key={q.id} className="p-4 hover:bg-slate-50/50 transition-colors">
+                                  <div 
+                                    className="flex items-start gap-3 cursor-pointer"
+                                    onClick={() => toggleQuestionExpand(q.id)}
                                   >
-                                    <BookOpen className="w-3 h-3" />
-                                    去规则课堂学习
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          )}
+                                    <div className="w-8 h-8 rounded-full bg-danger-100 text-danger-600 flex items-center justify-center shrink-0 mt-0.5">
+                                      <XCircle className="w-4 h-4" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                                        <span className="text-xs font-medium text-slate-500">
+                                          第 {qIndex + 1} 题
+                                        </span>
+                                        <span className="tag-accent text-xs">{q.typeName}</span>
+                                        <span className="tag text-xs bg-slate-100 text-slate-600">
+                                          {q.itemTypeName}
+                                        </span>
+                                      </div>
+                                      <p className="text-sm text-slate-800 line-clamp-2 leading-relaxed">
+                                        {q.content.replace(/\n/g, ' / ')}
+                                      </p>
+                                    </div>
+                                    <ChevronRight className={cn(
+                                      'w-5 h-5 text-slate-400 shrink-0 mt-1 transition-transform',
+                                      isExpanded && 'rotate-90'
+                                    )} />
+                                  </div>
+                                  
+                                  {isExpanded && (
+                                    <div className="mt-4 ml-11 space-y-3 animate-fade-in-up">
+                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                        <div className="p-3 rounded-lg bg-danger-50 border border-danger-100">
+                                          <p className="text-xs font-medium text-danger-700 mb-1 flex items-center gap-1">
+                                            <XCircle className="w-3 h-3" />
+                                            你的答案
+                                          </p>
+                                          <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">
+                                            {Array.isArray(userAnswer) ? userAnswer.join('、') : (userAnswer || '（未作答）')}
+                                          </p>
+                                        </div>
+                                        <div className="p-3 rounded-lg bg-success-50 border border-success-100">
+                                          <p className="text-xs font-medium text-success-700 mb-1 flex items-center gap-1">
+                                            <CheckCircle2 className="w-3 h-3" />
+                                            参考答案
+                                          </p>
+                                          <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">
+                                            {Array.isArray(q.correctAnswer) ? q.correctAnswer.join('、') : q.correctAnswer}
+                                          </p>
+                                        </div>
+                                      </div>
+                                      
+                                      {result.feedback && (
+                                        <div className="p-3 rounded-lg bg-accent-50 border border-accent-100">
+                                          <p className="text-xs font-medium text-accent-700 mb-1 flex items-center gap-1">
+                                            <AlertTriangle className="w-3 h-3" />
+                                            错因提示
+                                          </p>
+                                          <p className="text-sm text-slate-700">{result.feedback}</p>
+                                        </div>
+                                      )}
+
+                                      <div className="flex gap-2 pt-2 flex-wrap">
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            goBackToQuestion(qIndex);
+                                          }}
+                                          className="btn-secondary text-xs flex items-center gap-1"
+                                        >
+                                          <Eye className="w-3 h-3" />
+                                          回看原题
+                                        </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            goToKnowledge(kg.knowledgeId);
+                                          }}
+                                          className="btn-primary text-xs flex items-center gap-1"
+                                        >
+                                          <BookOpen className="w-3 h-3" />
+                                          去规则课堂学习「{kg.knowledgeTitle}」
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       );
                     })}
@@ -414,7 +462,7 @@ export const PracticeResult = () => {
                 ) : (
                   <div className="p-8 text-center text-slate-500">
                     <CheckCircle2 className="w-10 h-10 text-success-400 mx-auto mb-2" />
-                    <p className="text-sm">本类知识点掌握良好，没有错题！</p>
+                    <p className="text-sm">本大类掌握良好，没有错题！</p>
                   </div>
                 )}
               </div>

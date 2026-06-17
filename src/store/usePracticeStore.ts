@@ -204,19 +204,45 @@ export const usePracticeStore = create<PracticeState>((set, get) => ({
   
   submitAll: () => {
     const state = get();
-    const result = calculateScore(state.questions, state.userAnswers);
+    const now = Date.now();
     const totalTime = state.startTime 
-      ? Math.floor((Date.now() - state.startTime) / 1000) 
+      ? Math.floor((now - state.startTime) / 1000) 
       : 0;
     
+    const newSubmittedQuestions = { ...state.submittedQuestions };
+    const newSubmissionResults = { ...state.submissionResults };
+    const finalUserAnswers = { ...state.userAnswers };
+    
+    state.questions.forEach(q => {
+      const hasAnswer = finalUserAnswers[q.id] !== undefined;
+      const alreadySubmitted = !!newSubmittedQuestions[q.id];
+      
+      if (hasAnswer && !alreadySubmitted) {
+        const result = checkAnswer(q, finalUserAnswers[q.id]);
+        newSubmittedQuestions[q.id] = true;
+        newSubmissionResults[q.id] = {
+          isCorrect: result.isCorrect,
+          score: result.score,
+          maxScore: result.maxScore,
+          feedback: result.feedback,
+          matchedKeywords: result.matchedKeywords,
+          missingKeywords: result.missingKeywords,
+        };
+      }
+    });
+    
+    const result = calculateScore(state.questions, finalUserAnswers);
     const sessionResult: PracticeSessionResult = {
       ...result,
       timeSpent: totalTime,
     };
     
     set({ 
+      submittedQuestions: newSubmittedQuestions,
+      submissionResults: newSubmissionResults,
+      userAnswers: finalUserAnswers,
       isSubmitted: true, 
-      endTime: Date.now(),
+      endTime: now,
       finalResult: sessionResult,
     });
     return sessionResult;

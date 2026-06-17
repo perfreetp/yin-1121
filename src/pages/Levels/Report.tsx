@@ -33,7 +33,7 @@ import { formatTime } from '@/utils/format';
 export const LevelReport = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { questions, userAnswers, submittedQuestions, finalResult, reset } = usePracticeStore();
+  const { questions, userAnswers, submittedQuestions, submissionResults, finalResult, reset } = usePracticeStore();
   const { levelProgress, user } = useLearningStore();
   const [copied, setCopied] = useState(false);
   const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
@@ -68,27 +68,50 @@ export const LevelReport = () => {
   const questionResults = useMemo(() => {
     return questions.map((q, index) => {
       const userAnswer = userAnswers[q.id];
-      const isSubmitted = submittedQuestions[q.id];
-      const result = userAnswer !== undefined 
-        ? checkAnswer(q, userAnswer)
-        : null;
+      const storeResult = submissionResults[q.id];
+      const hasAnswer = userAnswer !== undefined;
+      
+      let checkResult = null;
+      if (storeResult) {
+        checkResult = {
+          isCorrect: storeResult.isCorrect,
+          feedback: storeResult.feedback,
+          score: storeResult.score,
+          maxScore: storeResult.maxScore,
+          matchedKeywords: storeResult.matchedKeywords,
+          missingKeywords: storeResult.missingKeywords
+        };
+      } else if (hasAnswer) {
+        const r = checkAnswer(q, userAnswer);
+        checkResult = {
+          isCorrect: r.isCorrect,
+          feedback: r.feedback,
+          score: r.score,
+          maxScore: r.maxScore,
+          matchedKeywords: r.matchedKeywords,
+          missingKeywords: r.missingKeywords
+        };
+      }
+      
       const knowledge = knowledgeList.find(k => k.id === q.knowledgeId);
       
       return {
         index,
         question: q,
         userAnswer,
-        isSubmitted,
-        isCorrect: result ? !!result.isCorrect : false,
-        feedback: result ? result.feedback : '未作答',
-        score: result?.score ?? 0,
-        maxScore: result?.maxScore ?? 1,
+        hasAnswer,
+        isCorrect: checkResult ? !!checkResult.isCorrect : false,
+        feedback: checkResult ? checkResult.feedback : '未作答',
+        score: checkResult?.score ?? 0,
+        maxScore: checkResult?.maxScore ?? 1,
+        matchedKeywords: checkResult?.matchedKeywords,
+        missingKeywords: checkResult?.missingKeywords,
         categoryName: knowledge?.categoryName || '其他',
         knowledgeId: knowledge?.id,
         knowledgeTitle: knowledge?.title || '未知知识点'
       };
     });
-  }, [questions, userAnswers, submittedQuestions]);
+  }, [questions, userAnswers, submissionResults]);
 
   const correctCount = questionResults.filter(r => r.isCorrect).length;
   const wrongCount = questionResults.filter(r => !r.isCorrect && r.userAnswer !== undefined).length;
@@ -323,12 +346,11 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
                   }}
                   className={cn(
                     'w-full aspect-square rounded-lg flex items-center justify-center text-sm font-bold transition-all hover:scale-105',
-                    r.isSubmitted && r.isCorrect && 'bg-success-100 text-success-700 hover:bg-success-200',
-                    r.isSubmitted && !r.isCorrect && 'bg-danger-100 text-danger-700 hover:bg-danger-200',
-                    !r.isSubmitted && r.userAnswer !== undefined && 'bg-primary-100 text-primary-700 hover:bg-primary-200',
-                    r.userAnswer === undefined && 'bg-slate-100 text-slate-400'
+                    r.hasAnswer && r.isCorrect && 'bg-success-100 text-success-700 hover:bg-success-200',
+                    r.hasAnswer && !r.isCorrect && 'bg-danger-100 text-danger-700 hover:bg-danger-200',
+                    !r.hasAnswer && 'bg-slate-100 text-slate-400'
                   )}
-                  title={`${r.isCorrect ? '正确' : r.userAnswer === undefined ? '未作答' : '错误'} - ${r.categoryName}`}
+                  title={`${r.isCorrect ? '判定正确' : r.hasAnswer ? '判定错误' : '未作答'} - ${r.categoryName}`}
                 >
                   {r.index + 1}
                 </button>
@@ -337,7 +359,6 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
             <div className="flex justify-center gap-4 text-xs text-slate-500">
               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-success-100" />判定正确</span>
               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-danger-100" />判定错误</span>
-              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-primary-100" />已填待判</span>
               <span className="flex items-center gap-1"><span className="w-3 h-3 rounded bg-slate-100" />未作答</span>
             </div>
           </div>
@@ -355,20 +376,38 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
                 const accuracy = g.totalCount > 0 
                   ? Math.round((g.correctCount / g.totalCount) * 100) 
                   : 0;
-                const knowledge = knowledgeList.find(k => k.id === g.knowledgeId);
                 
                 return (
-                  <div key={g.knowledgeId} className="p-4 rounded-xl bg-gradient-to-r from-slate-50 to-white border border-slate-100">
+                  <div key={g.category} className="p-4 rounded-xl bg-gradient-to-r from-slate-50 to-white border border-slate-100">
                     <div className="flex items-start justify-between gap-4 flex-wrap mb-2">
                       <div>
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
                           <span className="tag-primary">{g.categoryName}</span>
-                          <span className="text-xs text-slate-500">关联知识点：</span>
-                          <span className="text-xs font-medium text-slate-700">{g.knowledgeTitle}</span>
+                          <span className="text-xs text-slate-500">
+                            含 {g.knowledgeGroups.length} 个知识点
+                          </span>
                         </div>
                         <p className="text-xs text-slate-500">
                           共 {g.totalCount} 题，答对 {g.correctCount} 题，错 {g.wrongQuestions.length} 题
                         </p>
+                        {g.knowledgeGroups.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1">
+                            {g.knowledgeGroups.slice(0, 3).map(kg => (
+                              <button
+                                key={kg.knowledgeId}
+                                onClick={() => navigate(`/rules/${kg.knowledgeId}`)}
+                                className="text-xs px-2 py-0.5 rounded bg-primary-50 text-primary-700 border border-primary-200 hover:bg-primary-100 transition-colors"
+                              >
+                                📖 {kg.knowledgeTitle}
+                              </button>
+                            ))}
+                            {g.knowledgeGroups.length > 3 && (
+                              <span className="text-xs text-slate-400 px-2 py-0.5">
+                                +{g.knowledgeGroups.length - 3} 个
+                              </span>
+                            )}
+                          </div>
+                        )}
                       </div>
                       <div className="flex items-center gap-3">
                         <span className={cn(
@@ -379,9 +418,9 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
                         )}>
                           {accuracy}%
                         </span>
-                        {knowledge && (
+                        {g.knowledgeGroups.length === 1 && (
                           <button
-                            onClick={() => navigate(`/rules/${g.knowledgeId}`)}
+                            onClick={() => navigate(`/rules/${g.knowledgeGroups[0].knowledgeId}`)}
                             className="btn-secondary text-xs flex items-center gap-1 shrink-0"
                           >
                             <BookOpen className="w-3 h-3" />
@@ -454,15 +493,13 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
                     >
                       <div className={cn(
                         'w-9 h-9 rounded-full flex items-center justify-center shrink-0 mt-0.5',
-                        r.isSubmitted && r.isCorrect && 'bg-success-100',
-                        r.isSubmitted && !r.isCorrect && 'bg-danger-100',
-                        !r.isSubmitted && r.userAnswer !== undefined && 'bg-primary-100',
-                        r.userAnswer === undefined && 'bg-slate-100'
+                        r.hasAnswer && r.isCorrect && 'bg-success-100',
+                        r.hasAnswer && !r.isCorrect && 'bg-danger-100',
+                        !r.hasAnswer && 'bg-slate-100'
                       )}>
-                        {r.isSubmitted && r.isCorrect && <CheckCircle2 className="w-5 h-5 text-success-600" />}
-                        {r.isSubmitted && !r.isCorrect && <XCircle className="w-5 h-5 text-danger-600" />}
-                        {!r.isSubmitted && r.userAnswer !== undefined && <Clock className="w-5 h-5 text-primary-600" />}
-                        {r.userAnswer === undefined && <span className="text-xs text-slate-400">空</span>}
+                        {r.hasAnswer && r.isCorrect && <CheckCircle2 className="w-5 h-5 text-success-600" />}
+                        {r.hasAnswer && !r.isCorrect && <XCircle className="w-5 h-5 text-danger-600" />}
+                        {!r.hasAnswer && <span className="text-xs text-slate-400">空</span>}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -470,7 +507,7 @@ ${suggestions.map((s, i) => `${i + 1}. ${s}`).join('\n')}
                           <span className="tag-accent text-xs">{r.question.typeName}</span>
                           <span className="tag text-xs bg-slate-100 text-slate-600">{r.question.itemTypeName}</span>
                           <span className="tag text-xs">{r.categoryName}</span>
-                          {r.isSubmitted && r.maxScore > 1 && (
+                          {r.hasAnswer && r.maxScore > 1 && (
                             <span className={cn(
                               'tag text-xs',
                               (r.score / r.maxScore) >= 0.8 && 'tag-success',

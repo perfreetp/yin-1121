@@ -18,7 +18,42 @@ export const extractKeywords = (text: string): string[] => {
     .replace(/[,.!?()<>"']/g, ' ')
     .trim();
   
+  const coreTerms = [
+    '社保卡', '社会保障卡', '身份证', '身份证复印件', '居民身份证', '居民户口簿',
+    '户口簿', '护照', '驾驶证', '行驶证', '营业执照', '统一社会信用代码',
+    '共享核验', '数据共享', '共享核查', '联网核查', '电子证照', '证照共享',
+    '告知承诺', '告知承诺书', '承诺制', '容缺受理', '容缺办理', '事后补交',
+    '材料减免', '免提交', '无需提交', '不再提交', '免于提交',
+    '申请表', '申请书', '委托书', '授权书', '承诺书', '协议书', '确认书',
+    '原件', '复印件', '加盖公章', '原件核验', '纸质材料', '电子版',
+    '本人办理', '委托办理', '代理人', '委托人', '经办人', '法定代表人',
+    '工作证明', '收入证明', '居住证明', '社保证明', '纳税证明', '婚姻证明',
+    '不动产权证', '房产证', '土地使用证', '建设工程规划许可证', '施工许可证',
+    '受理条件', '申请材料', '法定依据', '承诺时限', '办理流程', '审查要点',
+    '适用对象', '办理地点', '办理时间', '咨询电话', '监督电话',
+    '行政许可', '行政给付', '行政确认', '行政奖励', '公共服务', '行政处罚',
+    '即时办理', '当场办结', '网上办理', '最多跑一次', '零跑腿',
+    '省级', '市级', '县级', '乡镇级', '街道级', '社区级',
+    '自然人', '法人', '其他组织', '企业法人', '事业单位', '社会团体',
+    '线上', '线下', '邮寄', '自取', '物流速递'
+  ];
+  
   const keywords: string[] = [];
+  const added = new Set<string>();
+  
+  const addTerm = (term: string) => {
+    if (term.length >= 2 && !added.has(term)) {
+      added.add(term);
+      keywords.push(term);
+    }
+  };
+  
+  coreTerms.forEach(term => {
+    if (cleaned.toLowerCase().includes(term.toLowerCase())) {
+      addTerm(term);
+    }
+  });
+  
   const phrases = cleaned.split(/\s+/).filter(s => s.length >= 2);
   
   const stopWords = new Set([
@@ -27,20 +62,33 @@ export const extractKeywords = (text: string): string[] => {
     '被', '由', '所', '之', '其', '该', '此', '各', '每', '一', '二', '三', '四', '五',
     '是', '有', '无', '不', '也', '都', '就', '并', '而', '且', '若', '如', '因', '则',
     '需提交', '应当', '必须', '可以', '相关', '对应', '材料', '内容', '条件', '依据',
-    '要求', '规定', '情况', '方式', '申请', '受理', '承诺'
+    '要求', '规定', '情况', '方式', '申请', '受理', '承诺', '提交', '提供', '办理',
+    '需要', '按照', '根据', '参照', '执行', '符合', '满足', '审核', '审批', '核实',
+    '核验', '核查', '核对', '查验', '检查', '审查', '核实', '确认', '决定',
+    '进行', '通过', '采用', '实施', '开展', '做好', '完成', '实现', '达到',
+    '及时', '按时', '有效', '齐全', '完整', '真实', '准确', '规范', '标准',
+    '相应', '有关', '相关', '各类', '各项', '各种', '若干', '以下', '以上',
+    '包括', '包含', '以及', '或者', '还是', '要么', '不是', '没有',
+    '一个', '一种', '一项', '一份', '一套', '一批', '一起', '一同',
+    '申请人', '申请方', '当事人', '相关人', '有关单位', '涉及'
   ]);
   
   phrases.forEach(phrase => {
-    if (!stopWords.has(phrase) && phrase.length >= 2) {
-      keywords.push(phrase);
+    if (!stopWords.has(phrase) && phrase.length >= 2 && !added.has(phrase)) {
+      const alreadyCovered = coreTerms.some(ct => 
+        ct.includes(phrase) || phrase.includes(ct)
+      );
+      if (!alreadyCovered) {
+        addTerm(phrase);
+      }
     }
   });
   
   if (keywords.length === 0) {
-    keywords.push(...phrases.filter(p => p.length >= 2));
+    phrases.filter(p => p.length >= 2).forEach(p => addTerm(p));
   }
   
-  return [...new Set(keywords)];
+  return [...keywords];
 };
 
 export const calculateKeywordMatch = (
@@ -263,9 +311,7 @@ export const calculateScore = (
   return { correct, total, score, detailResults };
 };
 
-export interface CategoryQuestionGroup {
-  category: KnowledgeCategory;
-  categoryName: string;
+export interface CategoryKnowledgeSubGroup {
   knowledgeId: string;
   knowledgeTitle: string;
   questions: Question[];
@@ -274,24 +320,49 @@ export interface CategoryQuestionGroup {
   totalCount: number;
 }
 
+export interface CategoryQuestionGroup {
+  category: KnowledgeCategory;
+  categoryName: string;
+  questions: Question[];
+  wrongQuestions: Question[];
+  correctCount: number;
+  totalCount: number;
+  knowledgeGroups: CategoryKnowledgeSubGroup[];
+}
+
 export const groupQuestionsByCategory = (
   questions: Question[],
   userAnswers: Record<string, string | string[]>
 ): CategoryQuestionGroup[] => {
-  const groupsMap = new Map<string, CategoryQuestionGroup>();
+  const categoryMap = new Map<KnowledgeCategory, CategoryQuestionGroup>();
+  const categoryKnowledgeMap = new Map<KnowledgeCategory, Map<string, CategoryKnowledgeSubGroup>>();
   
   questions.forEach(q => {
     const knowledge = knowledgeList.find(k => k.id === q.knowledgeId);
     if (!knowledge) return;
     
-    const key = knowledge.id;
+    const category = knowledge.category;
     const userAnswer = userAnswers[q.id];
     const isCorrect = userAnswer !== undefined && checkAnswer(q, userAnswer).isCorrect;
     
-    if (!groupsMap.has(key)) {
-      groupsMap.set(key, {
-        category: knowledge.category,
+    if (!categoryMap.has(category)) {
+      categoryMap.set(category, {
+        category,
         categoryName: knowledge.categoryName,
+        questions: [],
+        wrongQuestions: [],
+        correctCount: 0,
+        totalCount: 0,
+        knowledgeGroups: []
+      });
+      categoryKnowledgeMap.set(category, new Map());
+    }
+    
+    const categoryGroup = categoryMap.get(category)!;
+    const knowledgeSubMap = categoryKnowledgeMap.get(category)!;
+    
+    if (!knowledgeSubMap.has(knowledge.id)) {
+      knowledgeSubMap.set(knowledge.id, {
         knowledgeId: knowledge.id,
         knowledgeTitle: knowledge.title,
         questions: [],
@@ -301,17 +372,32 @@ export const groupQuestionsByCategory = (
       });
     }
     
-    const group = groupsMap.get(key)!;
-    group.questions.push(q);
-    group.totalCount++;
+    const knowledgeGroup = knowledgeSubMap.get(knowledge.id)!;
+    
+    categoryGroup.questions.push(q);
+    categoryGroup.totalCount++;
+    knowledgeGroup.questions.push(q);
+    knowledgeGroup.totalCount++;
+    
     if (isCorrect) {
-      group.correctCount++;
+      categoryGroup.correctCount++;
+      knowledgeGroup.correctCount++;
     } else {
-      group.wrongQuestions.push(q);
+      categoryGroup.wrongQuestions.push(q);
+      knowledgeGroup.wrongQuestions.push(q);
     }
   });
   
-  return Array.from(groupsMap.values()).sort((a, b) => 
+  categoryMap.forEach((group, category) => {
+    const subMap = categoryKnowledgeMap.get(category);
+    if (subMap) {
+      group.knowledgeGroups = Array.from(subMap.values()).sort((a, b) => 
+        (a.correctCount / Math.max(1, a.totalCount)) - (b.correctCount / Math.max(1, b.totalCount))
+      );
+    }
+  });
+  
+  return Array.from(categoryMap.values()).sort((a, b) => 
     (a.correctCount / Math.max(1, a.totalCount)) - (b.correctCount / Math.max(1, b.totalCount))
   );
 };
@@ -328,8 +414,13 @@ export const generateWeaknessSuggestions = (
   
   weakGroups.slice(0, 3).forEach((g, idx) => {
     const accuracy = Math.round((g.correctCount / g.totalCount) * 100);
+    const weakestKnowledge = g.knowledgeGroups[0];
+    const knowledgeText = weakestKnowledge
+      ? `重点复习「${weakestKnowledge.knowledgeTitle}」（正确率 ${Math.round((weakestKnowledge.correctCount / Math.max(1, weakestKnowledge.totalCount)) * 100)}%）`
+      : '结合错题解析强化记忆';
+    
     suggestions.push(
-      `${idx + 1}. ${g.categoryName}模块正确率仅${accuracy}%，建议复习「${g.knowledgeTitle}」知识点，重点关注错误题目涉及的要素。`
+      `${idx + 1}. 「${g.categoryName}」模块正确率仅${accuracy}%，${knowledgeText}，仔细核对错题涉及的判定要素。`
     );
   });
   
